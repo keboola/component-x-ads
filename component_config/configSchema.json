@@ -1,19 +1,304 @@
 {
   "type": "object",
-  "title": "extractor configuration",
+  "title": "X Ads Extractor configuration",
   "required": [
-    "print_hello"
+    "#consumer_key",
+    "#consumer_secret",
+    "#access_token",
+    "#access_token_secret"
   ],
   "properties": {
-    "print_hello": {
-      "type": "boolean",
-      "title": "Print Hello",
+    "#consumer_key": {
+      "type": "string",
+      "title": "Consumer API Key",
+      "format": "password",
       "propertyOrder": 1
     },
-    "debug": {
-      "type": "boolean",
-      "title": "Debug",
+    "#consumer_secret": {
+      "type": "string",
+      "title": "Consumer API Secret",
+      "format": "password",
       "propertyOrder": 2
+    },
+    "#access_token": {
+      "type": "string",
+      "title": "Access Token",
+      "format": "password",
+      "propertyOrder": 3
+    },
+    "#access_token_secret": {
+      "type": "string",
+      "title": "Access Token Secret",
+      "format": "password",
+      "propertyOrder": 4
+    },
+    "test_connection": {
+      "type": "button",
+      "format": "sync-action",
+      "propertyOrder": 5,
+      "options": {
+        "async": {
+          "label": "Test connection",
+          "action": "testConnection"
+        }
+      }
+    },
+    "account_ids": {
+      "type": "array",
+      "title": "Ad Accounts",
+      "items": {
+        "type": "string",
+        "enum": []
+      },
+      "format": "select",
+      "uniqueItems": true,
+      "default": [],
+      "description": "Select the X (Twitter) Ads accounts to extract data for.",
+      "propertyOrder": 6,
+      "options": {
+        "tags": true,
+        "async": {
+          "label": "Load accounts",
+          "action": "listAccounts"
+        }
+      }
+    },
+    "objects": {
+      "type": "array",
+      "title": "Objects to extract",
+      "items": {
+        "type": "string",
+        "enum": [
+          "accounts",
+          "funding_instruments",
+          "campaigns",
+          "line_items",
+          "promoted_tweets",
+          "promoted_accounts",
+          "media_creatives"
+        ]
+      },
+      "format": "select",
+      "uniqueItems": true,
+      "default": [],
+      "description": "Campaign-management entities to extract as tables.",
+      "propertyOrder": 7,
+      "options": {
+        "enum_titles": [
+          "Accounts",
+          "Funding Instruments",
+          "Campaigns",
+          "Line Items",
+          "Promoted Tweets",
+          "Promoted Accounts",
+          "Media Creatives"
+        ]
+      }
+    },
+    "analytics": {
+      "type": "object",
+      "title": "Analytics",
+      "propertyOrder": 8,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Enable analytics",
+          "format": "checkbox",
+          "default": false,
+          "propertyOrder": 1
+        },
+        "entities": {
+          "type": "array",
+          "title": "Entities",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ACCOUNT",
+              "FUNDING_INSTRUMENT",
+              "CAMPAIGN",
+              "LINE_ITEM",
+              "PROMOTED_TWEET",
+              "PROMOTED_ACCOUNT"
+            ]
+          },
+          "format": "select",
+          "uniqueItems": true,
+          "default": [],
+          "description": "Entity types to fetch analytics (stats) for.",
+          "propertyOrder": 2,
+          "options": {
+            "enum_titles": [
+              "Account",
+              "Funding Instrument",
+              "Campaign",
+              "Line Item",
+              "Promoted Tweet",
+              "Promoted Account"
+            ],
+            "dependencies": {
+              "enabled": true
+            }
+          }
+        },
+        "metric_groups": {
+          "type": "array",
+          "title": "Metric groups",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ENGAGEMENT",
+              "BILLING",
+              "VIDEO",
+              "MEDIA",
+              "WEB_CONVERSION",
+              "MOBILE_CONVERSION",
+              "LIFE_TIME_VALUE_MOBILE_CONVERSION"
+            ]
+          },
+          "format": "select",
+          "uniqueItems": true,
+          "default": [
+            "ENGAGEMENT",
+            "BILLING"
+          ],
+          "propertyOrder": 3,
+          "options": {
+            "enum_titles": [
+              "Engagement",
+              "Billing",
+              "Video",
+              "Media",
+              "Web Conversion",
+              "Mobile Conversion",
+              "Life Time Value Mobile Conversion"
+            ],
+            "dependencies": {
+              "enabled": true
+            }
+          }
+        },
+        "granularity": {
+          "type": "string",
+          "title": "Granularity",
+          "enum": [
+            "DAY",
+            "TOTAL",
+            "HOUR"
+          ],
+          "default": "DAY",
+          "propertyOrder": 4,
+          "options": {
+            "enum_titles": [
+              "Day",
+              "Total",
+              "Hour"
+            ],
+            "dependencies": {
+              "enabled": true
+            }
+          }
+        },
+        "placement": {
+          "type": "string",
+          "title": "Placement",
+          "enum": [
+            "ALL_ON_TWITTER",
+            "PUBLISHER_NETWORK"
+          ],
+          "default": "ALL_ON_TWITTER",
+          "propertyOrder": 5,
+          "options": {
+            "enum_titles": [
+              "All on Twitter",
+              "Publisher Network"
+            ],
+            "dependencies": {
+              "enabled": true
+            }
+          }
+        },
+        "date_range_mode": {
+          "type": "string",
+          "title": "Date range mode",
+          "enum": [
+            "last_n_days",
+            "custom"
+          ],
+          "default": "last_n_days",
+          "propertyOrder": 6,
+          "options": {
+            "enum_titles": [
+              "Last N Days",
+              "Custom Date Range"
+            ],
+            "dependencies": {
+              "enabled": true
+            }
+          }
+        },
+        "n_days": {
+          "type": "integer",
+          "title": "Number of days",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 90,
+          "description": "Number of trailing days (including today) to fetch analytics for.",
+          "propertyOrder": 7,
+          "options": {
+            "dependencies": {
+              "enabled": true,
+              "date_range_mode": "last_n_days"
+            }
+          }
+        },
+        "start_date": {
+          "type": "string",
+          "title": "Start date",
+          "description": "Date in YYYY-MM-DD format.",
+          "propertyOrder": 8,
+          "options": {
+            "inputAttributes": {
+              "placeholder": "YYYY-MM-DD"
+            },
+            "dependencies": {
+              "enabled": true,
+              "date_range_mode": "custom"
+            }
+          }
+        },
+        "end_date": {
+          "type": "string",
+          "title": "End date",
+          "description": "Date in YYYY-MM-DD format.",
+          "propertyOrder": 9,
+          "options": {
+            "inputAttributes": {
+              "placeholder": "YYYY-MM-DD"
+            },
+            "dependencies": {
+              "enabled": true,
+              "date_range_mode": "custom"
+            }
+          }
+        }
+      }
+    },
+    "load_type": {
+      "type": "string",
+      "title": "Load type",
+      "enum": [
+        "full_load",
+        "incremental_load"
+      ],
+      "default": "incremental_load",
+      "description": "If Full load is used, the destination tables will be overwritten on every run. If Incremental load is used, data will be upserted based on primary key.",
+      "propertyOrder": 9,
+      "options": {
+        "enum_titles": [
+          "Full Load",
+          "Incremental Load"
+        ]
+      }
     }
   }
 }
