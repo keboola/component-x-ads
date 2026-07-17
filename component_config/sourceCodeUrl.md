@@ -1,1 +1,1 @@
-https://github.com/keboola/component-ex-x-ads
+https://github.com/keboola/component-x-ads

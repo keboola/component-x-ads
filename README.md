@@ -81,8 +81,8 @@ Clone this repository, initialize the workspace, and run the component using the
 commands:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-git clone  component-ex-x-ads
-cd component-ex-x-ads
+git clone https://github.com/keboola/component-x-ads.git
+cd component-x-ads
 docker-compose build
 docker-compose run --rm dev
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
