@@ -135,6 +135,11 @@ class XAdsClient:
     def list_accounts(self) -> list[dict]:
         return list(self.get_paginated("accounts"))
 
+    def get_account(self, account_id: str) -> dict:
+        """Fetch a single account (used to resolve its timezone for analytics windows)."""
+        body = self._request("GET", f"accounts/{account_id}").json()
+        return body.get("data") or {}
+
     def list_account_entities(self, account_id: str, object_name: str) -> Iterator[dict]:
         """List an account-scoped entity collection (campaigns, line_items, ...)."""
         return self.get_paginated(f"accounts/{account_id}/{object_name}")

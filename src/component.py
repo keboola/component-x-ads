@@ -8,7 +8,8 @@ access lives in :mod:`client`.
 import csv
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from keboola.component.base import ComponentBase, sync_action
 from keboola.component.exceptions import UserException
@@ -96,14 +97,21 @@ class Component(ComponentBase):
 
     def _extract_analytics(self, client: XAdsClient, cfg: Configuration, previous_state: dict) -> None:
         a = cfg.analytics
-        start, end = self._analytics_window(cfg, previous_state)
-        windows = self._split_windows(start, end)
         metric_groups = [m.value for m in a.metric_groups]
+        rows_by_entity: dict[StatsEntity, list[dict]] = {entity: [] for entity in a.entities}
 
-        for entity in a.entities:
-            rows: list[dict] = []
-            for account_id in cfg.account_ids:
-                rows.extend(self._collect_entity_stats(client, cfg, account_id, entity, metric_groups, windows))
+        # The analytics window must align to midnight in the account's timezone, and that
+        # timezone can differ per account — so resolve it and build the window per account.
+        for account_id in cfg.account_ids:
+            zone = self._account_zone(client, account_id)
+            start_date, end_date = self._analytics_window(cfg, previous_state, zone)
+            windows = self._split_windows(start_date, end_date)
+            for entity in a.entities:
+                rows_by_entity[entity].extend(
+                    self._collect_entity_stats(client, cfg, account_id, entity, metric_groups, windows, zone)
+                )
+
+        for entity, rows in rows_by_entity.items():
             pk = ["account_id", "entity_type", "entity_id", "segment", "placement", "date"]
             self._write_table(f"x_ads_stats_{entity.value.lower()}", rows, primary_key=pk, incremental=cfg.incremental)
 
@@ -114,18 +122,20 @@ class Component(ComponentBase):
         account_id: str,
         entity: StatsEntity,
         metric_groups: list[str],
-        windows: list[tuple[datetime, datetime]],
+        windows: list[tuple[date, date]],
+        zone: ZoneInfo,
     ) -> list[dict]:
         placement = cfg.analytics.placement.value
         granularity = cfg.analytics.granularity.value
         rows: list[dict] = []
 
         for win_start, win_end in windows:
-            start_iso, end_iso = self._iso_hour(win_start), self._iso_hour(win_end)
+            start_iso = self._local_midnight_utc(win_start, zone)
+            end_iso = self._local_midnight_utc(win_end, zone)
             entity_ids = self._resolve_entity_ids(client, account_id, entity, start_iso, end_iso)
             if not entity_ids:
                 logging.info(
-                    "No active %s entities for account %s in %s..%s", entity.value, account_id, start_iso, end_iso
+                    "No active %s entities for account %s in %s..%s", entity.value, account_id, win_start, win_end
                 )
                 continue
 
@@ -142,7 +152,9 @@ class Component(ComponentBase):
                 )
                 url = client.poll_job(account_id, job_id)
                 result = client.download_job_result(url)
-                rows.extend(self._flatten_stats(result, account_id, entity.value, granularity, placement, win_start))
+                rows.extend(
+                    self._flatten_stats(result, account_id, entity.value, granularity, placement, win_start, zone)
+                )
         return rows
 
     def _resolve_entity_ids(
@@ -155,42 +167,52 @@ class Component(ComponentBase):
             return [e["entity_id"] for e in active if e.get("entity_id")]
         return []
 
-    def _analytics_window(self, cfg: Configuration, previous_state: dict) -> tuple[datetime, datetime]:
+    def _account_zone(self, client: XAdsClient, account_id: str) -> ZoneInfo:
+        tz_name = client.get_account(account_id).get("timezone") or "UTC"
+        try:
+            return ZoneInfo(tz_name)
+        except (ZoneInfoNotFoundError, ValueError):
+            logging.warning("Unknown account timezone %r for %s; falling back to UTC.", tz_name, account_id)
+            return ZoneInfo("UTC")
+
+    def _analytics_window(self, cfg: Configuration, previous_state: dict, zone: ZoneInfo) -> tuple[date, date]:
         a = cfg.analytics
-        today_midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_local = datetime.now(zone).date()
 
         if a.date_range_mode == DateRangeMode.custom:
             return self._parse_day(a.start_date), self._parse_day(a.end_date)
 
-        end = today_midnight
+        end = today_local
         start = end - timedelta(days=a.n_days)
         if cfg.incremental:
             last = previous_state.get(_STATE_LAST_RUN)
             if last:
-                last_day = (
-                    datetime.fromisoformat(last).astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-                )
+                last_day = datetime.fromisoformat(last).astimezone(zone).date()
                 # Re-pull from the last successful run so revised stats are upserted; never start after `end`.
                 start = min(last_day, end)
         return start, end
 
-    def _split_windows(self, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    def _split_windows(self, start: date, end: date) -> list[tuple[date, date]]:
         if start >= end:
-            raise UserException(
-                f"Analytics start ({start.date()}) must be before end ({end.date()}). Check your date range."
-            )
-        windows: list[tuple[datetime, datetime]] = []
+            raise UserException(f"Analytics start ({start}) must be before end ({end}). Check your date range.")
+        windows: list[tuple[date, date]] = []
         cursor = start
-        step = timedelta(days=_MAX_JOB_WINDOW_DAYS)
         while cursor < end:
-            windows.append((cursor, min(cursor + step, end)))
-            cursor += step
+            windows.append((cursor, min(cursor + timedelta(days=_MAX_JOB_WINDOW_DAYS), end)))
+            cursor += timedelta(days=_MAX_JOB_WINDOW_DAYS)
         return windows
 
     # ---------------------------------------------------------- flattening
 
     def _flatten_stats(
-        self, result: dict, account_id: str, entity_type: str, granularity: str, placement: str, win_start: datetime
+        self,
+        result: dict,
+        account_id: str,
+        entity_type: str,
+        granularity: str,
+        placement: str,
+        win_start: date,
+        zone: ZoneInfo,
     ) -> list[dict]:
         rows: list[dict] = []
         for entity in result.get("data") or []:
@@ -207,7 +229,7 @@ class Component(ComponentBase):
                         "segment": segment,
                         "placement": placement,
                         "granularity": granularity,
-                        "date": self._bucket_label(win_start, granularity, i),
+                        "date": self._bucket_label(win_start, granularity, i, zone),
                     }
                     for mkey, mval in metrics.items():
                         row[mkey] = self._metric_value(mval, i)
@@ -285,25 +307,28 @@ class Component(ComponentBase):
             yield items[i : i + size]
 
     @staticmethod
-    def _parse_day(value: str | None) -> datetime:
+    def _parse_day(value: str | None) -> date:
         if not value:
             raise UserException("A date is required but was empty. Expected format YYYY-MM-DD.")
         try:
-            return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
-        except TypeError, ValueError:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except (TypeError, ValueError):
             raise UserException(f"Invalid date '{value}'. Expected format YYYY-MM-DD.")
 
     @staticmethod
-    def _iso_hour(dt: datetime) -> str:
-        return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:00:00Z")
+    def _local_midnight_utc(day: date, zone: ZoneInfo) -> str:
+        """UTC instant of midnight-on `day` in the account timezone, as X expects (whole hour)."""
+        local_midnight = datetime(day.year, day.month, day.day, tzinfo=zone)
+        return local_midnight.astimezone(UTC).strftime("%Y-%m-%dT%H:00:00Z")
 
     @staticmethod
-    def _bucket_label(win_start: datetime, granularity: str, index: int) -> str:
+    def _bucket_label(win_start: date, granularity: str, index: int, zone: ZoneInfo) -> str:
         if granularity == Granularity.HOUR.value:
-            return (win_start + timedelta(hours=index)).astimezone(UTC).strftime("%Y-%m-%dT%H:00:00Z")
+            dt = datetime(win_start.year, win_start.month, win_start.day, tzinfo=zone) + timedelta(hours=index)
+            return dt.strftime("%Y-%m-%dT%H:00:00%z")
         if granularity == Granularity.TOTAL.value:
-            return win_start.date().isoformat()
-        return (win_start + timedelta(days=index)).date().isoformat()
+            return win_start.isoformat()
+        return (win_start + timedelta(days=index)).isoformat()
 
     # ------------------------------------------------------- sync actions
 

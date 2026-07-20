@@ -44,6 +44,7 @@ def _write_datadir(tmp_path: Path, analytics_enabled: bool) -> Path:
 
 def _fake_client():
     client = mock.Mock()
+    client.get_account.return_value = {"timezone": "UTC"}
     client.list_account_entities.return_value = iter(
         [{"id": "c1", "name": "Campaign 1", "targeting": {"k": "v"}}]
     )

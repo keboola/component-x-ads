@@ -1,11 +1,15 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 import pytest
 from keboola.component.exceptions import UserException
 
 from component import Component
 from configuration import Configuration, StatsEntity
+
+UTC_ZONE = ZoneInfo("UTC")
+PRAGUE = ZoneInfo("Europe/Prague")
 
 
 def _component():
@@ -50,34 +54,38 @@ def test_serialize_bool_and_none():
     assert comp._serialize("x") == "x"
 
 
+def test_local_midnight_utc_respects_account_timezone():
+    comp = _component()
+    # Prague is UTC+2 in July → local midnight is 22:00 the previous UTC day.
+    assert comp._local_midnight_utc(date(2026, 7, 13), PRAGUE) == "2026-07-12T22:00:00Z"
+    assert comp._local_midnight_utc(date(2026, 7, 13), UTC_ZONE) == "2026-07-13T00:00:00Z"
+
+
 def test_bucket_label_day_hour_total():
     comp = _component()
-    start = datetime(2024, 1, 1, tzinfo=UTC)
-    assert comp._bucket_label(start, "DAY", 0) == "2024-01-01"
-    assert comp._bucket_label(start, "DAY", 3) == "2024-01-04"
-    assert comp._bucket_label(start, "HOUR", 2) == "2024-01-01T02:00:00Z"
-    assert comp._bucket_label(start, "TOTAL", 5) == "2024-01-01"
+    d = date(2024, 1, 1)
+    assert comp._bucket_label(d, "DAY", 0, UTC_ZONE) == "2024-01-01"
+    assert comp._bucket_label(d, "DAY", 3, UTC_ZONE) == "2024-01-04"
+    assert comp._bucket_label(d, "HOUR", 2, UTC_ZONE) == "2024-01-01T02:00:00+0000"
+    assert comp._bucket_label(d, "TOTAL", 5, UTC_ZONE) == "2024-01-01"
 
 
 def test_split_windows_chunks_over_90_days():
     comp = _component()
-    start = datetime(2024, 1, 1, tzinfo=UTC)
-    end = datetime(2024, 6, 1, tzinfo=UTC)  # ~152 days
+    start = date(2024, 1, 1)
+    end = date(2024, 6, 1)  # ~152 days
     windows = comp._split_windows(start, end)
     assert len(windows) == 2
     assert windows[0][0] == start
     assert windows[-1][1] == end
-    # no window exceeds 90 days
     for ws, we in windows:
         assert (we - ws).days <= 90
 
 
 def test_split_windows_start_after_end_raises():
     comp = _component()
-    start = datetime(2024, 6, 1, tzinfo=UTC)
-    end = datetime(2024, 1, 1, tzinfo=UTC)
     with pytest.raises(UserException):
-        comp._split_windows(start, end)
+        comp._split_windows(date(2024, 6, 1), date(2024, 1, 1))
 
 
 def test_flatten_stats_produces_daily_rows():
@@ -92,8 +100,7 @@ def test_flatten_stats_produces_daily_rows():
             }
         ]
     }
-    start = datetime(2024, 1, 1, tzinfo=UTC)
-    rows = comp._flatten_stats(result, "18ce", "LINE_ITEM", "DAY", "ALL_ON_TWITTER", start)
+    rows = comp._flatten_stats(result, "18ce", "LINE_ITEM", "DAY", "ALL_ON_TWITTER", date(2024, 1, 1), UTC_ZONE)
     assert len(rows) == 3
     assert rows[0]["entity_id"] == "line1"
     assert rows[0]["date"] == "2024-01-01"
@@ -119,7 +126,7 @@ def test_flatten_stats_handles_null_metric_and_segment():
             }
         ]
     }
-    rows = comp._flatten_stats(result, "18ce", "LINE_ITEM", "DAY", "ALL_ON_TWITTER", datetime(2024, 1, 1, tzinfo=UTC))
+    rows = comp._flatten_stats(result, "18ce", "LINE_ITEM", "DAY", "ALL_ON_TWITTER", date(2024, 1, 1), UTC_ZONE)
     assert rows[0]["impressions"] == ""
     assert rows[0]["segment"] == "AGE=25_to_34"
     assert rows[1]["impressions"] == 5
@@ -140,16 +147,23 @@ def test_resolve_entity_ids_uses_active_entities():
     client.active_entities.assert_called_once()
 
 
+def test_account_zone_falls_back_to_utc_on_unknown():
+    comp = _component()
+    client = mock.Mock()
+    client.get_account.return_value = {"timezone": "Not/AZone"}
+    assert comp._account_zone(client, "18ce") == ZoneInfo("UTC")
+    client.get_account.return_value = {"timezone": "Europe/Prague"}
+    assert comp._account_zone(client, "18ce") == PRAGUE
+
+
 def test_analytics_window_last_n_days():
     comp = _component()
     cfg = _cfg(analytics={"enabled": True, "entities": ["LINE_ITEM"], "n_days": 7})
     with mock.patch("component.datetime") as dt:
         dt.now.return_value = datetime(2024, 3, 10, 12, 0, tzinfo=UTC)
-        # keep real classmethods used elsewhere
-        dt.side_effect = lambda *a, **k: datetime(*a, **k)
-        start, end = comp._analytics_window(cfg, {})
-    assert end == datetime(2024, 3, 10, tzinfo=UTC)
-    assert start == datetime(2024, 3, 3, tzinfo=UTC)
+        start, end = comp._analytics_window(cfg, {}, UTC_ZONE)
+    assert end == date(2024, 3, 10)
+    assert start == date(2024, 3, 3)
 
 
 def test_analytics_window_incremental_uses_state():
@@ -159,9 +173,25 @@ def test_analytics_window_incremental_uses_state():
     with mock.patch("component.datetime") as dt:
         dt.now.return_value = datetime(2024, 3, 10, 12, 0, tzinfo=UTC)
         dt.fromisoformat.side_effect = datetime.fromisoformat
-        start, end = comp._analytics_window(cfg, state)
-    # start should snap to the last_run day (2024-03-08), not the 7-day default (2024-03-03)
-    assert start == datetime(2024, 3, 8, tzinfo=UTC)
+        start, _ = comp._analytics_window(cfg, state, UTC_ZONE)
+    # start snaps to the last_run day (2024-03-08), not the 7-day default (2024-03-03)
+    assert start == date(2024, 3, 8)
+
+
+def test_analytics_window_custom_range():
+    comp = _component()
+    cfg = _cfg(
+        analytics={
+            "enabled": True,
+            "entities": ["LINE_ITEM"],
+            "date_range_mode": "custom",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+        }
+    )
+    start, end = comp._analytics_window(cfg, {}, PRAGUE)
+    assert start == date(2024, 1, 1)
+    assert end == date(2024, 1, 31)
 
 
 def test_chunk_splits_list():
@@ -175,3 +205,4 @@ def test_parse_day_invalid_raises():
         comp._parse_day("not-a-date")
     with pytest.raises(UserException):
         comp._parse_day(None)
+    assert comp._parse_day("2024-05-06") == date(2024, 5, 6)
