@@ -1,0 +1,13 @@
+{
+  "action": "run",
+  "parameters": {
+    "#consumer_key": "DUMMY",
+    "#consumer_secret": "DUMMY",
+    "#access_token": "DUMMY",
+    "#access_token_secret": "DUMMY",
+    "account_ids": [],
+    "objects": [
+      "campaigns"
+    ]
+  }
+}

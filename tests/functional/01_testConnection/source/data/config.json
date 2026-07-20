@@ -1,0 +1,9 @@
+{
+  "action": "testConnection",
+  "parameters": {
+    "#consumer_key": "DUMMY",
+    "#consumer_secret": "DUMMY",
+    "#access_token": "DUMMY",
+    "#access_token_secret": "DUMMY"
+  }
+}

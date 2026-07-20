@@ -1,0 +1,108 @@
+{
+  "files": {},
+  "hash_algorithm": "sha256",
+  "tables": {
+    "x_ads_campaigns.csv": {
+      "columns": [
+        "18ce55he0li",
+        "iuyql",
+        "LINE_ITEM",
+        "2022-11-11T08:26:52Z",
+        "EUR",
+        "REDACTED",
+        "false",
+        "",
+        "EXPIRED",
+        "ACTIVE",
+        "",
+        "13vhl4",
+        "REDACTED",
+        "",
+        "[\"EXPIRED\", \"FUNDING_PROBLEM\"]",
+        "false",
+        "",
+        "REDACTED",
+        "2022-11-22T10:19:39Z"
+      ],
+      "hash": "sha256:ae729ec0f17f33d7c8921666635b543913fb8776057d4b8a7be450a96ffbb6ce",
+      "row_count": 11,
+      "size_bytes": 2125
+    },
+    "x_ads_campaigns.csv.manifest": {
+      "columns": null,
+      "hash": "sha256:8186b2211cdd60458b4c489971475532efc2f7bb66edc6714bd9dd3a5fdd2e10",
+      "row_count": null,
+      "size_bytes": 1883
+    },
+    "x_ads_line_items.csv": {
+      "columns": [
+        "18ce55he0li",
+        "nsqfm",
+        "REDACTED",
+        "REDACTED",
+        "",
+        "",
+        "",
+        "REDACTED",
+        "AUTO",
+        "iuyql",
+        "[\"IAB3-4\"]",
+        "2022-11-11T08:26:52Z",
+        "MANUAL",
+        "EUR",
+        "REDACTED",
+        "false",
+        "",
+        "2022-11-29T23:00:00Z",
+        "ACTIVE",
+        "",
+        "13vhl4",
+        "SITE_VISITS",
+        "",
+        "REDACTED",
+        "WEBSITE_CLICKS",
+        "IMPRESSION",
+        "[\"ALL_ON_TWITTER\"]",
+        "qry9v",
+        "PROMOTED_TWEETS",
+        "true",
+        "2022-11-11T08:03:45Z",
+        "REDACTED",
+        "REDACTED",
+        "2022-11-11T08:26:52Z"
+      ],
+      "hash": "sha256:246ae2fca44f8023a1b201f985da281733c9776cb96db2ce98e69ab70832419e",
+      "row_count": 13,
+      "size_bytes": 3874
+    },
+    "x_ads_line_items.csv.manifest": {
+      "columns": null,
+      "hash": "sha256:853e7e5d6e916c26f02fc2ac83bda14e32a94a1362d98fd617a590c51a7d33f5",
+      "row_count": null,
+      "size_bytes": 3226
+    },
+    "x_ads_promoted_tweets.csv": {
+      "columns": [
+        "18ce55he0li",
+        "9pxvvv",
+        "ACCEPTED",
+        "2022-11-22T10:24:00Z",
+        "false",
+        "ACTIVE",
+        "nsqfm",
+        "REDACTED",
+        "2022-11-22T10:24:01Z"
+      ],
+      "hash": "sha256:6e29782b1f9697eb9a7ff3e9f87a0a7e7774b3f8c97e9b31192973aa3dc49d83",
+      "row_count": 36,
+      "size_bytes": 3564
+    },
+    "x_ads_promoted_tweets.csv.manifest": {
+      "columns": null,
+      "hash": "sha256:f1af5ad5dc03d0ff5fc4efc0f5f527c66c94ecbf638d3d6ffd03109447cfa2b9",
+      "row_count": null,
+      "size_bytes": 943
+    }
+  },
+  "version": "1.0"
+}

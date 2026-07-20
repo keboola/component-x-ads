@@ -38,12 +38,12 @@ def test_flatten_record_serializes_nested():
     assert flat["tags"] == "[1, 2]"
 
 
-def test_collect_columns_puts_pk_first():
+def test_collect_columns_pk_first_then_sorted():
     comp = _component()
     rows = [{"id": "1", "z": 1}, {"id": "2", "a": 3}]
     cols = comp._collect_columns(rows, ["account_id", "id"])
-    assert cols[:2] == ["account_id", "id"]
-    assert set(cols) == {"account_id", "id", "z", "a"}
+    # PK first (in given order), then remaining columns alphabetically — deterministic.
+    assert cols == ["account_id", "id", "a", "z"]
 
 
 def test_serialize_bool_and_none():

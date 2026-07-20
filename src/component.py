@@ -14,9 +14,37 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from keboola.component.base import ComponentBase, sync_action
 from keboola.component.exceptions import UserException
 from keboola.component.sync_actions import MessageType, SelectElement, ValidationResult
+from keboola.vcr import BodyFieldSanitizer, DefaultSanitizer
 
 from client import MAX_ENTITY_IDS_PER_JOB, XAdsClient
 from configuration import Configuration, DateRangeMode, EntityObject, Granularity, StatsEntity
+
+# Picked up automatically by the datadirtest VCR scaffolder during recording.
+# 1) DefaultSanitizer strips the Authorization header carrying the OAuth 1.0a
+#    credentials + signature (only content-type/length/accept are kept).
+# 2) BodyFieldSanitizer redacts the ad account's names, identifiers and money
+#    figures from recorded response bodies so the committed cassettes carry no
+#    marketing/spend data. NEVER add `timezone` (drives the analytics window) or
+#    any id field (`id`, `campaign_id`, `line_item_id`, `account_id`, …) here —
+#    the component logic and primary keys depend on them.
+_REDACTED_BODY_FIELDS = [
+    "name",
+    "advertiser_user_id",
+    "advertiser_domain",
+    "business_name",
+    "business_id",
+    "tweet_id",
+    "daily_budget_amount_local_micro",
+    "total_budget_amount_local_micro",
+    "bid_amount_local_micro",
+    "target_cpa_local_micro",
+    "billed_charge_local_micro",
+    "billed_engagements",
+]
+VCR_SANITIZERS = [
+    DefaultSanitizer(additional_sensitive_fields=["oauth_token", "oauth_consumer_key", "oauth_signature"]),
+    BodyFieldSanitizer(fields=_REDACTED_BODY_FIELDS, replacement="REDACTED"),
+]
 
 _STATE_LAST_RUN = "last_run"
 
@@ -282,14 +310,14 @@ class Component(ComponentBase):
 
     @staticmethod
     def _collect_columns(rows: list[dict], primary_key: list[str]) -> list[str]:
-        ordered = list(primary_key)
-        seen = set(ordered)
+        # Deterministic column order: primary key first, then the remaining fields
+        # alphabetically. Data-derived order would vary with API response ordering,
+        # which is undesirable for a stable incremental schema.
+        seen = set(primary_key)
+        extra: set[str] = set()
         for row in rows:
-            for key in row:
-                if key not in seen:
-                    ordered.append(key)
-                    seen.add(key)
-        return ordered
+            extra.update(key for key in row if key not in seen)
+        return list(primary_key) + sorted(extra)
 
     @staticmethod
     def _serialize(value):

@@ -1,0 +1,84 @@
+[
+  {
+    "name": "01_testConnection",
+    "description": "Validate credentials via GET accounts",
+    "config": {
+      "action": "testConnection",
+      "parameters": {
+        "#consumer_key": "DUMMY",
+        "#consumer_secret": "DUMMY",
+        "#access_token": "DUMMY",
+        "#access_token_secret": "DUMMY"
+      }
+    }
+  },
+  {
+    "name": "02_listAccounts",
+    "description": "Load ad accounts for the UI dropdown",
+    "config": {
+      "action": "listAccounts",
+      "parameters": {
+        "#consumer_key": "DUMMY",
+        "#consumer_secret": "DUMMY",
+        "#access_token": "DUMMY",
+        "#access_token_secret": "DUMMY"
+      }
+    }
+  },
+  {
+    "name": "03_run_entities",
+    "description": "Extract campaigns, line items and promoted tweets (full load)",
+    "config": {
+      "action": "run",
+      "parameters": {
+        "#consumer_key": "DUMMY",
+        "#consumer_secret": "DUMMY",
+        "#access_token": "DUMMY",
+        "#access_token_secret": "DUMMY",
+        "account_ids": ["18ce55he0li"],
+        "objects": ["campaigns", "line_items", "promoted_tweets"],
+        "load_type": "full_load"
+      }
+    }
+  },
+  {
+    "name": "04_run_with_analytics",
+    "description": "Run with analytics enabled (exercises get_account + active_entities path)",
+    "config": {
+      "action": "run",
+      "parameters": {
+        "#consumer_key": "DUMMY",
+        "#consumer_secret": "DUMMY",
+        "#access_token": "DUMMY",
+        "#access_token_secret": "DUMMY",
+        "account_ids": ["18ce55he0li"],
+        "objects": ["campaigns"],
+        "analytics": {
+          "enabled": true,
+          "entities": ["LINE_ITEM"],
+          "metric_groups": ["ENGAGEMENT", "BILLING"],
+          "granularity": "DAY",
+          "placement": "ALL_ON_TWITTER",
+          "date_range_mode": "last_n_days",
+          "n_days": 7
+        },
+        "load_type": "full_load"
+      }
+    }
+  },
+  {
+    "name": "05_run_missing_accounts",
+    "description": "Run without account_ids should fail with exit code 1",
+    "config": {
+      "action": "run",
+      "parameters": {
+        "#consumer_key": "DUMMY",
+        "#consumer_secret": "DUMMY",
+        "#access_token": "DUMMY",
+        "#access_token_secret": "DUMMY",
+        "account_ids": [],
+        "objects": ["campaigns"]
+      }
+    }
+  }
+]

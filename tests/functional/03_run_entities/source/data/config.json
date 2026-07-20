@@ -1,0 +1,18 @@
+{
+  "action": "run",
+  "parameters": {
+    "#consumer_key": "DUMMY",
+    "#consumer_secret": "DUMMY",
+    "#access_token": "DUMMY",
+    "#access_token_secret": "DUMMY",
+    "account_ids": [
+      "18ce55he0li"
+    ],
+    "objects": [
+      "campaigns",
+      "line_items",
+      "promoted_tweets"
+    ],
+    "load_type": "full_load"
+  }
+}

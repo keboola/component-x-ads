@@ -1,0 +1,36 @@
+{
+  "exit_code": null,
+  "stderr": "",
+  "logs": [
+    {
+      "level": "INFO",
+      "logger": "root",
+      "message": "Loading state file..",
+      "timestamp": "2026-07-20T12:00:00.000Z"
+    },
+    {
+      "level": "INFO",
+      "logger": "root",
+      "message": "Wrote 11 rows to x_ads_campaigns.",
+      "timestamp": "2026-07-20T12:00:00.000Z"
+    },
+    {
+      "level": "INFO",
+      "logger": "root",
+      "message": "Wrote 13 rows to x_ads_line_items.",
+      "timestamp": "2026-07-20T12:00:00.000Z"
+    },
+    {
+      "level": "INFO",
+      "logger": "root",
+      "message": "Wrote 36 rows to x_ads_promoted_tweets.",
+      "timestamp": "2026-07-20T12:00:00.000Z"
+    },
+    {
+      "level": "INFO",
+      "logger": "root",
+      "message": "Extraction finished.",
+      "timestamp": "2026-07-20T12:00:00.000Z"
+    }
+  ]
+}
