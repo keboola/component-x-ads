@@ -9,6 +9,9 @@ __pycache__/
 venv
 .claude
 
+# build lifecycle tracker — local only, never committed
+docs/superpowers/
+
 # kbc datafolder
 /data
 
