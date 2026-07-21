@@ -3,6 +3,7 @@ import json
 from unittest import mock
 
 import pytest
+import requests
 from keboola.component.exceptions import UserException
 
 from client import MAX_ENTITY_IDS_PER_JOB, XAdsClient, XAdsClientError
@@ -68,11 +69,61 @@ def test_request_401_raises_userexception():
     assert "Authentication failed" in str(exc.value)
 
 
-def test_request_500_raises_clienterror():
+def test_request_retries_5xx_then_raises_clienterror():
+    # 500/502/503/504 are transient: retried, then surfaced as XAdsClientError (exit 2).
     client = _client()
     with mock.patch.object(client._session, "request", return_value=FakeResponse(status_code=500, text="boom")):
-        with pytest.raises(XAdsClientError):
+        with mock.patch("client.time.sleep") as sleep:
+            with pytest.raises(XAdsClientError):
+                client._request("GET", "accounts")
+    assert sleep.call_count >= 1  # retried before giving up
+
+
+def test_request_500_then_success_is_retried():
+    client = _client()
+    responses = [FakeResponse(status_code=502), FakeResponse(json_body={"data": []})]
+    with mock.patch.object(client._session, "request", side_effect=responses):
+        with mock.patch("client.time.sleep"):
+            resp = client._request("GET", "accounts")
+    assert resp.status_code == 200
+
+
+def test_request_400_raises_userexception():
+    # User-fixable 4xx should be a UserException (exit 1), not a generic internal error.
+    client = _client()
+    with mock.patch.object(client._session, "request", return_value=FakeResponse(status_code=400, text="bad param")):
+        with pytest.raises(UserException):
             client._request("GET", "accounts")
+
+
+def test_request_network_error_retried_then_raises():
+    client = _client()
+    with mock.patch.object(client._session, "request", side_effect=requests.ConnectionError("boom")):
+        with mock.patch("client.time.sleep") as sleep:
+            with pytest.raises(XAdsClientError):
+                client._request("GET", "accounts")
+    assert sleep.call_count >= 1
+
+
+def test_download_job_result_sanitizes_url_on_error():
+    client = _client()
+
+    class BoomResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            raise requests.HTTPError("403 Forbidden")
+
+    with mock.patch("client.requests.get", return_value=BoomResp()):
+        with pytest.raises(XAdsClientError) as exc:
+            client.download_job_result("https://s3.example.com/job.json.gz?X-Amz-Signature=SECRET&Expires=123")
+    # the signed query string must not leak into the error message
+    assert "SECRET" not in str(exc.value)
+    assert "X-Amz-Signature" not in str(exc.value)
 
 
 def test_create_async_job_returns_id_and_builds_params():

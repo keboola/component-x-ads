@@ -5,11 +5,10 @@ re-raised as a ``UserException`` so the platform surfaces it as a user error
 (exit 1) instead of an unexpected crash (exit 2).
 """
 
-import logging
 from enum import StrEnum
 
 from keboola.component.exceptions import UserException
-from pydantic import BaseModel, Field, ValidationError, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, computed_field, model_validator
 
 
 class EntityObject(StrEnum):
@@ -69,6 +68,8 @@ class LoadType(StrEnum):
 class Analytics(BaseModel):
     """Analytics (async stats jobs) sub-configuration."""
 
+    model_config = ConfigDict(extra="ignore")
+
     enabled: bool = False
     entities: list[StatsEntity] = Field(default_factory=list)
     metric_groups: list[MetricGroup] = Field(default_factory=lambda: [MetricGroup.ENGAGEMENT, MetricGroup.BILLING])
@@ -97,6 +98,10 @@ class Analytics(BaseModel):
 class Configuration(BaseModel):
     """Top-level component configuration."""
 
+    # Ignore unknown keys: the platform injects extras (e.g. `debug`) that aren't
+    # part of this model and must not fail validation.
+    model_config = ConfigDict(extra="ignore")
+
     consumer_key: str = Field(alias="#consumer_key")
     consumer_secret: str = Field(alias="#consumer_secret")
     access_token: str = Field(alias="#access_token")
@@ -106,17 +111,13 @@ class Configuration(BaseModel):
     objects: list[EntityObject] = Field(default_factory=list)
     analytics: Analytics = Field(default_factory=Analytics)
     load_type: LoadType = LoadType.incremental_load
-    debug: bool = False
 
     def __init__(self, **data):
         try:
             super().__init__(**data)
         except ValidationError as e:
             error_messages = [f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors()]
-            raise UserException(f"Configuration validation error: {', '.join(error_messages)}")
-
-        if self.debug:
-            logging.debug("Component will run in Debug mode")
+            raise UserException(f"Configuration validation error: {', '.join(error_messages)}") from e
 
     @computed_field
     @property

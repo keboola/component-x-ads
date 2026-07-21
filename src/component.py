@@ -8,10 +8,13 @@ access lives in :mod:`client`.
 import csv
 import json
 import logging
+from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from keboola.component.base import ComponentBase, sync_action
+from keboola.component.dao import BaseType, ColumnDefinition
 from keboola.component.exceptions import UserException
 from keboola.component.sync_actions import MessageType, SelectElement, ValidationResult
 from keboola.vcr import BodyFieldSanitizer, DefaultSanitizer
@@ -22,18 +25,14 @@ from configuration import Configuration, DateRangeMode, EntityObject, Granularit
 # Picked up automatically by the datadirtest VCR scaffolder during recording.
 # 1) DefaultSanitizer strips the Authorization header carrying the OAuth 1.0a
 #    credentials + signature (only content-type/length/accept are kept).
-# 2) BodyFieldSanitizer redacts the ad account's names, identifiers and money
-#    figures from recorded response bodies so the committed cassettes carry no
-#    marketing/spend data. NEVER add `timezone` (drives the analytics window) or
-#    any id field (`id`, `campaign_id`, `line_item_id`, `account_id`, …) here —
-#    the component logic and primary keys depend on them.
-_REDACTED_BODY_FIELDS = [
-    "name",
-    "advertiser_user_id",
-    "advertiser_domain",
-    "business_name",
-    "business_id",
-    "tweet_id",
+# 2) BodyFieldSanitizer redacts the ad account's names/identifiers (-> REDACTED)
+#    and money figures (-> 0, so numeric-typed columns stay valid) from recorded
+#    response bodies, so committed cassettes carry no marketing/spend data.
+#    NEVER add `timezone` (drives the analytics window) or any id field
+#    (`id`, `campaign_id`, `line_item_id`, `account_id`, …) — the component logic
+#    and primary keys depend on them.
+_REDACTED_TEXT_FIELDS = ["name", "advertiser_user_id", "advertiser_domain", "business_name", "business_id", "tweet_id"]
+_REDACTED_NUMERIC_FIELDS = [
     "daily_budget_amount_local_micro",
     "total_budget_amount_local_micro",
     "bid_amount_local_micro",
@@ -43,7 +42,8 @@ _REDACTED_BODY_FIELDS = [
 ]
 VCR_SANITIZERS = [
     DefaultSanitizer(additional_sensitive_fields=["oauth_token", "oauth_consumer_key", "oauth_signature"]),
-    BodyFieldSanitizer(fields=_REDACTED_BODY_FIELDS, replacement="REDACTED"),
+    BodyFieldSanitizer(fields=_REDACTED_TEXT_FIELDS, replacement="REDACTED"),
+    BodyFieldSanitizer(fields=_REDACTED_NUMERIC_FIELDS, replacement="0"),
 ]
 
 _STATE_LAST_RUN = "last_run"
@@ -60,28 +60,42 @@ _ACTIVE_ENTITY_TYPES = {
     StatsEntity.PROMOTED_TWEET,
 }
 
+# Native output types for fields the X Ads API exposes with a stable, known type.
+# Metric columns are deliberately left STRING — they are heterogeneous (some are
+# nested arrays that we serialize to JSON), so typing them risks load failures.
+_TIMESTAMP_COLUMNS = frozenset({"created_at", "updated_at", "start_time", "end_time"})
+_BOOLEAN_COLUMNS = frozenset({"deleted", "servable", "standard_delivery"})
+
 
 class Component(ComponentBase):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
+        # Parse config and build the API client once, so run() and the sync
+        # actions (separate entrypoints) share one instance. A bad config raises
+        # UserException here -> exit 1 via the entrypoint handler.
+        self._config = Configuration(**self.configuration.parameters)
+        self._client = XAdsClient(
+            self._config.consumer_key,
+            self._config.consumer_secret,
+            self._config.access_token,
+            self._config.access_token_secret,
+        )
 
     # ----------------------------------------------------------------- run
 
-    def run(self):
-        cfg = Configuration(**self.configuration.parameters)
+    def run(self) -> None:
+        cfg = self._config
         self._validate_run_config(cfg)
-
-        client = self._get_client(cfg)
 
         # Capture the watermark BEFORE fetching so anything changing mid-run is re-fetched next time.
         run_started_at = datetime.now(UTC)
         previous_state = self.get_state_file() or {}
 
         if cfg.objects:
-            self._extract_entities(client, cfg)
+            self._extract_entities(cfg)
 
         if cfg.analytics.enabled:
-            self._extract_analytics(client, cfg, previous_state)
+            self._extract_analytics(cfg, previous_state)
 
         # Advance the watermark only after successful writes.
         self.write_state_file({_STATE_LAST_RUN: run_started_at.isoformat()})
@@ -94,26 +108,18 @@ class Component(ComponentBase):
         if not cfg.objects and not cfg.analytics.enabled:
             raise UserException("Nothing to extract: select at least one object or enable analytics.")
 
-    def _get_client(self, cfg: Configuration) -> XAdsClient:
-        return XAdsClient(
-            cfg.consumer_key,
-            cfg.consumer_secret,
-            cfg.access_token,
-            cfg.access_token_secret,
-        )
-
     # ------------------------------------------------------------ entities
 
-    def _extract_entities(self, client: XAdsClient, cfg: Configuration) -> None:
+    def _extract_entities(self, cfg: Configuration) -> None:
         for obj in cfg.objects:
-            rows: list[dict] = []
+            rows: list[dict[str, Any]] = []
             if obj == EntityObject.accounts:
-                for account in client.list_accounts():
+                for account in self._client.list_accounts():
                     if account.get("id") in cfg.account_ids:
                         rows.append(self._flatten_record(account))
             else:
                 for account_id in cfg.account_ids:
-                    for record in client.list_account_entities(account_id, obj.value):
+                    for record in self._client.list_account_entities(account_id, obj.value):
                         flat = self._flatten_record(record)
                         flat["account_id"] = account_id
                         rows.append(flat)
@@ -123,20 +129,28 @@ class Component(ComponentBase):
 
     # ----------------------------------------------------------- analytics
 
-    def _extract_analytics(self, client: XAdsClient, cfg: Configuration, previous_state: dict) -> None:
+    def _extract_analytics(self, cfg: Configuration, previous_state: dict[str, Any]) -> None:
         a = cfg.analytics
         metric_groups = [m.value for m in a.metric_groups]
-        rows_by_entity: dict[StatsEntity, list[dict]] = {entity: [] for entity in a.entities}
+        rows_by_entity: dict[StatsEntity, list[dict[str, Any]]] = {entity: [] for entity in a.entities}
 
         # The analytics window must align to midnight in the account's timezone, and that
         # timezone can differ per account — so resolve it and build the window per account.
         for account_id in cfg.account_ids:
-            zone = self._account_zone(client, account_id)
+            zone = self._account_zone(account_id)
             start_date, end_date = self._analytics_window(cfg, previous_state, zone)
             windows = self._split_windows(start_date, end_date)
+            if not windows:
+                logging.info(
+                    "Analytics for account %s already up to date (%s..%s); nothing to fetch.",
+                    account_id,
+                    start_date,
+                    end_date,
+                )
+                continue
             for entity in a.entities:
                 rows_by_entity[entity].extend(
-                    self._collect_entity_stats(client, cfg, account_id, entity, metric_groups, windows, zone)
+                    self._collect_entity_stats(cfg, account_id, entity, metric_groups, windows, zone)
                 )
 
         for entity, rows in rows_by_entity.items():
@@ -145,22 +159,21 @@ class Component(ComponentBase):
 
     def _collect_entity_stats(
         self,
-        client: XAdsClient,
         cfg: Configuration,
         account_id: str,
         entity: StatsEntity,
         metric_groups: list[str],
         windows: list[tuple[date, date]],
         zone: ZoneInfo,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         placement = cfg.analytics.placement.value
         granularity = cfg.analytics.granularity.value
-        rows: list[dict] = []
+        rows: list[dict[str, Any]] = []
 
         for win_start, win_end in windows:
             start_iso = self._local_midnight_utc(win_start, zone)
             end_iso = self._local_midnight_utc(win_end, zone)
-            entity_ids = self._resolve_entity_ids(client, account_id, entity, start_iso, end_iso)
+            entity_ids = self._resolve_entity_ids(account_id, entity, start_iso, end_iso)
             if not entity_ids:
                 logging.info(
                     "No active %s entities for account %s in %s..%s", entity.value, account_id, win_start, win_end
@@ -168,7 +181,7 @@ class Component(ComponentBase):
                 continue
 
             for chunk in self._chunk(entity_ids, MAX_ENTITY_IDS_PER_JOB):
-                job_id = client.create_async_job(
+                job_id = self._client.create_async_job(
                     account_id,
                     entity=entity.value,
                     entity_ids=chunk,
@@ -178,51 +191,65 @@ class Component(ComponentBase):
                     start_time=start_iso,
                     end_time=end_iso,
                 )
-                url = client.poll_job(account_id, job_id)
-                result = client.download_job_result(url)
+                url = self._client.poll_job(account_id, job_id)
+                result = self._client.download_job_result(url)
                 rows.extend(
                     self._flatten_stats(result, account_id, entity.value, granularity, placement, win_start, zone)
                 )
         return rows
 
-    def _resolve_entity_ids(
-        self, client: XAdsClient, account_id: str, entity: StatsEntity, start_iso: str, end_iso: str
-    ) -> list[str]:
+    def _resolve_entity_ids(self, account_id: str, entity: StatsEntity, start_iso: str, end_iso: str) -> list[str]:
         if entity == StatsEntity.ACCOUNT:
             return [account_id]
         if entity in _ACTIVE_ENTITY_TYPES:
-            active = client.active_entities(account_id, entity.value, start_iso, end_iso)
+            active = self._client.active_entities(account_id, entity.value, start_iso, end_iso)
             return [e["entity_id"] for e in active if e.get("entity_id")]
         return []
 
-    def _account_zone(self, client: XAdsClient, account_id: str) -> ZoneInfo:
-        tz_name = client.get_account(account_id).get("timezone") or "UTC"
+    def _account_zone(self, account_id: str) -> ZoneInfo:
+        tz_name = self._client.get_account(account_id).get("timezone") or "UTC"
         try:
             return ZoneInfo(tz_name)
-        except (ZoneInfoNotFoundError, ValueError):
+        except ZoneInfoNotFoundError, ValueError:
             logging.warning("Unknown account timezone %r for %s; falling back to UTC.", tz_name, account_id)
             return ZoneInfo("UTC")
 
-    def _analytics_window(self, cfg: Configuration, previous_state: dict, zone: ZoneInfo) -> tuple[date, date]:
+    def _analytics_window(
+        self, cfg: Configuration, previous_state: dict[str, Any], zone: ZoneInfo
+    ) -> tuple[date, date]:
         a = cfg.analytics
-        today_local = datetime.now(zone).date()
 
         if a.date_range_mode == DateRangeMode.custom:
-            return self._parse_day(a.start_date), self._parse_day(a.end_date)
+            start, end = self._parse_day(a.start_date), self._parse_day(a.end_date)
+            if start >= end:
+                raise UserException(f"Analytics start date ({start}) must be before end date ({end}).")
+            return start, end
 
-        end = today_local
+        end = datetime.now(zone).date()
         start = end - timedelta(days=a.n_days)
         if cfg.incremental:
-            last = previous_state.get(_STATE_LAST_RUN)
-            if last:
-                last_day = datetime.fromisoformat(last).astimezone(zone).date()
+            last = self._state_last_run_day(previous_state, zone)
+            if last is not None:
                 # Re-pull from the last successful run so revised stats are upserted; never start after `end`.
-                start = min(last_day, end)
+                start = min(last, end)
         return start, end
 
-    def _split_windows(self, start: date, end: date) -> list[tuple[date, date]]:
-        if start >= end:
-            raise UserException(f"Analytics start ({start}) must be before end ({end}). Check your date range.")
+    @staticmethod
+    def _state_last_run_day(previous_state: dict[str, Any], zone: ZoneInfo) -> date | None:
+        last = previous_state.get(_STATE_LAST_RUN)
+        if not last:
+            return None
+        try:
+            return datetime.fromisoformat(last).astimezone(zone).date()
+        except TypeError, ValueError:
+            logging.warning("Ignoring unreadable %s state value %r; using the default window.", _STATE_LAST_RUN, last)
+            return None
+
+    @staticmethod
+    def _split_windows(start: date, end: date) -> list[tuple[date, date]]:
+        # Empty (start >= end) is not an error: in last-N-days incremental mode a same-day
+        # re-run legitimately has nothing new to fetch. Custom-range validation happens in
+        # _analytics_window, where a user-entered start >= end IS a UserException.
         windows: list[tuple[date, date]] = []
         cursor = start
         while cursor < end:
@@ -234,15 +261,15 @@ class Component(ComponentBase):
 
     def _flatten_stats(
         self,
-        result: dict,
+        result: dict[str, Any],
         account_id: str,
         entity_type: str,
         granularity: str,
         placement: str,
         win_start: date,
         zone: ZoneInfo,
-    ) -> list[dict]:
-        rows: list[dict] = []
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
         for entity in result.get("data") or []:
             entity_id = entity.get("id")
             for id_data in entity.get("id_data") or []:
@@ -250,7 +277,7 @@ class Component(ComponentBase):
                 metrics = id_data.get("metrics") or {}
                 length = max((len(v) for v in metrics.values() if isinstance(v, list)), default=1)
                 for i in range(length):
-                    row = {
+                    row: dict[str, Any] = {
                         "account_id": account_id,
                         "entity_type": entity_type,
                         "entity_id": entity_id,
@@ -265,7 +292,7 @@ class Component(ComponentBase):
         return rows
 
     @staticmethod
-    def _metric_value(mval, i: int):
+    def _metric_value(mval: object, i: int) -> object:
         if isinstance(mval, list):
             if i >= len(mval) or mval[i] is None:
                 return ""
@@ -274,7 +301,7 @@ class Component(ComponentBase):
         return "" if mval is None else mval
 
     @staticmethod
-    def _segment_label(segment) -> str:
+    def _segment_label(segment: dict[str, Any] | None) -> str:
         if not segment:
             return ""
         name = segment.get("segment_name")
@@ -284,22 +311,23 @@ class Component(ComponentBase):
         return json.dumps(segment)
 
     @staticmethod
-    def _flatten_record(record: dict) -> dict:
+    def _flatten_record(record: dict[str, Any]) -> dict[str, Any]:
         """Flatten one entity record; nested objects/lists become JSON strings."""
-        flat = {}
+        flat: dict[str, Any] = {}
         for key, value in record.items():
             flat[key] = json.dumps(value) if isinstance(value, (list, dict)) else value
         return flat
 
     # -------------------------------------------------------------- output
 
-    def _write_table(self, name: str, rows: list[dict], primary_key: list[str], incremental: bool) -> None:
+    def _write_table(self, name: str, rows: list[dict[str, Any]], primary_key: list[str], incremental: bool) -> None:
         if not rows:
             logging.info("No rows for %s; skipping table.", name)
             return
         columns = self._collect_columns(rows, primary_key)
+        schema = {col: ColumnDefinition(data_types=self._base_type_for(col)) for col in columns}
         table = self.create_out_table_definition(
-            f"{name}.csv", primary_key=primary_key, incremental=incremental, schema=columns
+            f"{name}.csv", primary_key=primary_key, incremental=incremental, schema=schema
         )
         with open(table.full_path, "w", encoding="utf-8", newline="") as fh:
             writer = csv.writer(fh)
@@ -309,7 +337,17 @@ class Component(ComponentBase):
         logging.info("Wrote %d rows to %s.", len(rows), name)
 
     @staticmethod
-    def _collect_columns(rows: list[dict], primary_key: list[str]) -> list[str]:
+    def _base_type_for(name: str) -> BaseType:
+        if name.endswith("_local_micro"):
+            return BaseType.integer()
+        if name in _TIMESTAMP_COLUMNS:
+            return BaseType.timestamp()
+        if name in _BOOLEAN_COLUMNS:
+            return BaseType.boolean()
+        return BaseType.string()
+
+    @staticmethod
+    def _collect_columns(rows: list[dict[str, Any]], primary_key: list[str]) -> list[str]:
         # Deterministic column order: primary key first, then the remaining fields
         # alphabetically. Data-derived order would vary with API response ordering,
         # which is undesirable for a stable incremental schema.
@@ -320,7 +358,7 @@ class Component(ComponentBase):
         return list(primary_key) + sorted(extra)
 
     @staticmethod
-    def _serialize(value):
+    def _serialize(value: object) -> object:
         if value is None:
             return ""
         if isinstance(value, bool):
@@ -330,7 +368,7 @@ class Component(ComponentBase):
     # --------------------------------------------------------------- utils
 
     @staticmethod
-    def _chunk(items: list[str], size: int):
+    def _chunk(items: list[str], size: int) -> Iterator[list[str]]:
         for i in range(0, len(items), size):
             yield items[i : i + size]
 
@@ -340,8 +378,8 @@ class Component(ComponentBase):
             raise UserException("A date is required but was empty. Expected format YYYY-MM-DD.")
         try:
             return datetime.strptime(value, "%Y-%m-%d").date()
-        except (TypeError, ValueError):
-            raise UserException(f"Invalid date '{value}'. Expected format YYYY-MM-DD.")
+        except TypeError, ValueError:
+            raise UserException(f"Invalid date '{value}'. Expected format YYYY-MM-DD.") from None
 
     @staticmethod
     def _local_midnight_utc(day: date, zone: ZoneInfo) -> str:
@@ -362,29 +400,23 @@ class Component(ComponentBase):
 
     @sync_action("testConnection")
     def test_connection(self) -> ValidationResult:
-        cfg = Configuration(**self.configuration.parameters)
-        client = self._get_client(cfg)
-        client.list_accounts()
+        try:
+            self._client.list_accounts()
+        except UserException:
+            raise
+        except Exception as exc:
+            raise UserException(f"Connection test failed: {exc}") from exc
         return ValidationResult("Connection successful.", MessageType.SUCCESS)
 
     @sync_action("listAccounts")
     def list_accounts_action(self) -> list[SelectElement]:
-        cfg = Configuration(**self.configuration.parameters)
-        client = self._get_client(cfg)
         return [
             SelectElement(value=acc["id"], label=f"{acc.get('name', acc['id'])} ({acc['id']})")
-            for acc in client.list_accounts()
+            for acc in self._client.list_accounts()
             if acc.get("id")
         ]
 
-    @sync_action("listObjects")
-    def list_objects_action(self) -> list[SelectElement]:
-        return [SelectElement(value=o.value, label=o.value) for o in EntityObject]
 
-
-"""
-        Main entrypoint
-"""
 if __name__ == "__main__":
     try:
         comp = Component()

@@ -45,9 +45,7 @@ def _write_datadir(tmp_path: Path, analytics_enabled: bool) -> Path:
 def _fake_client():
     client = mock.Mock()
     client.get_account.return_value = {"timezone": "UTC"}
-    client.list_account_entities.return_value = iter(
-        [{"id": "c1", "name": "Campaign 1", "targeting": {"k": "v"}}]
-    )
+    client.list_account_entities.return_value = iter([{"id": "c1", "name": "Campaign 1", "targeting": {"k": "v"}}])
     client.active_entities.return_value = [{"entity_id": "line1"}]
     client.create_async_job.return_value = "job1"
     client.poll_job.return_value = "https://x/data.gz"
@@ -74,8 +72,8 @@ def test_run_writes_entity_and_analytics_tables(tmp_path):
     datadir = _write_datadir(tmp_path, analytics_enabled=True)
     with mock.patch.dict(os.environ, {"KBC_DATADIR": str(datadir)}):
         comp = Component()
-        with mock.patch.object(comp, "_get_client", return_value=_fake_client()):
-            comp.run()
+        comp._client = _fake_client()
+        comp.run()
 
     out = datadir / "out" / "tables"
 

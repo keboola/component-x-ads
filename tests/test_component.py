@@ -82,10 +82,38 @@ def test_split_windows_chunks_over_90_days():
         assert (we - ws).days <= 90
 
 
-def test_split_windows_start_after_end_raises():
+def test_split_windows_empty_when_start_not_before_end():
+    # Same-day incremental re-run: nothing new to fetch -> empty, not an error.
     comp = _component()
+    assert comp._split_windows(date(2024, 6, 1), date(2024, 6, 1)) == []
+    assert comp._split_windows(date(2024, 6, 2), date(2024, 6, 1)) == []
+
+
+def test_analytics_window_custom_start_after_end_raises():
+    comp = _component()
+    cfg = _cfg(
+        analytics={
+            "enabled": True,
+            "entities": ["LINE_ITEM"],
+            "date_range_mode": "custom",
+            "start_date": "2024-02-01",
+            "end_date": "2024-01-01",
+        }
+    )
     with pytest.raises(UserException):
-        comp._split_windows(date(2024, 6, 1), date(2024, 1, 1))
+        comp._analytics_window(cfg, {}, UTC_ZONE)
+
+
+def test_analytics_window_incremental_same_day_yields_no_windows():
+    comp = _component()
+    cfg = _cfg(analytics={"enabled": True, "entities": ["LINE_ITEM"], "n_days": 7})
+    state = {"last_run": "2024-03-10T06:00:00+00:00"}
+    with mock.patch("component.datetime") as dt:
+        dt.now.return_value = datetime(2024, 3, 10, 12, 0, tzinfo=UTC)
+        dt.fromisoformat.side_effect = datetime.fromisoformat
+        start, end = comp._analytics_window(cfg, state, UTC_ZONE)
+    assert start == end == date(2024, 3, 10)
+    assert comp._split_windows(start, end) == []
 
 
 def test_flatten_stats_produces_daily_rows():
@@ -134,26 +162,27 @@ def test_flatten_stats_handles_null_metric_and_segment():
 
 def test_resolve_entity_ids_account_uses_account_id():
     comp = _component()
-    ids = comp._resolve_entity_ids(mock.Mock(), "18ce", StatsEntity.ACCOUNT, "s", "e")
+    comp._client = mock.Mock()
+    ids = comp._resolve_entity_ids("18ce", StatsEntity.ACCOUNT, "s", "e")
     assert ids == ["18ce"]
 
 
 def test_resolve_entity_ids_uses_active_entities():
     comp = _component()
-    client = mock.Mock()
-    client.active_entities.return_value = [{"entity_id": "a"}, {"entity_id": "b"}, {"foo": "no_id"}]
-    ids = comp._resolve_entity_ids(client, "18ce", StatsEntity.LINE_ITEM, "s", "e")
+    comp._client = mock.Mock()
+    comp._client.active_entities.return_value = [{"entity_id": "a"}, {"entity_id": "b"}, {"foo": "no_id"}]
+    ids = comp._resolve_entity_ids("18ce", StatsEntity.LINE_ITEM, "s", "e")
     assert ids == ["a", "b"]
-    client.active_entities.assert_called_once()
+    comp._client.active_entities.assert_called_once()
 
 
 def test_account_zone_falls_back_to_utc_on_unknown():
     comp = _component()
-    client = mock.Mock()
-    client.get_account.return_value = {"timezone": "Not/AZone"}
-    assert comp._account_zone(client, "18ce") == ZoneInfo("UTC")
-    client.get_account.return_value = {"timezone": "Europe/Prague"}
-    assert comp._account_zone(client, "18ce") == PRAGUE
+    comp._client = mock.Mock()
+    comp._client.get_account.return_value = {"timezone": "Not/AZone"}
+    assert comp._account_zone("18ce") == ZoneInfo("UTC")
+    comp._client.get_account.return_value = {"timezone": "Europe/Prague"}
+    assert comp._account_zone("18ce") == PRAGUE
 
 
 def test_analytics_window_last_n_days():

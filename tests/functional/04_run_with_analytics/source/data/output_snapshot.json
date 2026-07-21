@@ -9,7 +9,7 @@
         "LINE_ITEM",
         "2022-11-11T08:26:52Z",
         "EUR",
-        "REDACTED",
+        "0",
         "false",
         "",
         "EXPIRED",
@@ -21,18 +21,18 @@
         "[\"EXPIRED\", \"FUNDING_PROBLEM\"]",
         "false",
         "",
-        "REDACTED",
+        "0",
         "2022-11-22T10:19:39Z"
       ],
-      "hash": "sha256:ae729ec0f17f33d7c8921666635b543913fb8776057d4b8a7be450a96ffbb6ce",
+      "hash": "sha256:313ae432eb3d0c4532abdc333b67cb07daa05cd905672786929d4448ccd35f4d",
       "row_count": 11,
-      "size_bytes": 2125
+      "size_bytes": 1971
     },
     "x_ads_campaigns.csv.manifest": {
       "columns": null,
-      "hash": "sha256:8186b2211cdd60458b4c489971475532efc2f7bb66edc6714bd9dd3a5fdd2e10",
+      "hash": "sha256:4393b64aa504943d87a907789f2462b29494807ef18a261686311f583a8e4621",
       "row_count": null,
-      "size_bytes": 1883
+      "size_bytes": 1894
     }
   },
   "version": "1.0"

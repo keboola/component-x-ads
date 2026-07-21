@@ -1,44 +1,42 @@
 {
   "type": "object",
   "title": "X Ads Extractor configuration",
-  "required": [
-    "#consumer_key",
-    "#consumer_secret",
-    "#access_token",
-    "#access_token_secret"
-  ],
   "properties": {
     "#consumer_key": {
       "type": "string",
       "title": "Consumer API Key",
       "format": "password",
+      "required": true,
       "propertyOrder": 1
     },
     "#consumer_secret": {
       "type": "string",
       "title": "Consumer API Secret",
       "format": "password",
+      "required": true,
       "propertyOrder": 2
     },
     "#access_token": {
       "type": "string",
       "title": "Access Token",
       "format": "password",
+      "required": true,
       "propertyOrder": 3
     },
     "#access_token_secret": {
       "type": "string",
       "title": "Access Token Secret",
       "format": "password",
+      "required": true,
       "propertyOrder": 4
     },
     "test_connection": {
       "type": "button",
-      "format": "sync-action",
+      "format": "test-connection",
       "propertyOrder": 5,
       "options": {
         "async": {
-          "label": "Test connection",
+          "label": "Test Connection",
           "action": "testConnection"
         }
       }
@@ -58,8 +56,9 @@
       "options": {
         "tags": true,
         "async": {
-          "label": "Load accounts",
-          "action": "listAccounts"
+          "label": "Load Accounts",
+          "action": "listAccounts",
+          "autoload": ["#consumer_key", "#consumer_secret", "#access_token", "#access_token_secret"]
         }
       }
     },

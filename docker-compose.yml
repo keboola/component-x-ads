@@ -8,12 +8,15 @@ services:
     environment:
       - KBC_DATADIR=./data
   test:
-    # Use to run flake8 and unittests checks
-    build: .
+    # Use to run ruff + pytest checks locally (same as CI)
+    build:
+      context: .
+      target: test
     volumes:
       - ./:/code
       - ./data:/data
     environment:
       - KBC_DATADIR=./data
     command:
-      - python -m pytest tests/ --tb=short -q
+      - /bin/sh
+      - /code/scripts/build_n_test.sh

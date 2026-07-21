@@ -9,7 +9,7 @@
         "LINE_ITEM",
         "2022-11-11T08:26:52Z",
         "EUR",
-        "REDACTED",
+        "0",
         "false",
         "",
         "EXPIRED",
@@ -21,18 +21,18 @@
         "[\"EXPIRED\", \"FUNDING_PROBLEM\"]",
         "false",
         "",
-        "REDACTED",
+        "0",
         "2022-11-22T10:19:39Z"
       ],
-      "hash": "sha256:ae729ec0f17f33d7c8921666635b543913fb8776057d4b8a7be450a96ffbb6ce",
+      "hash": "sha256:313ae432eb3d0c4532abdc333b67cb07daa05cd905672786929d4448ccd35f4d",
       "row_count": 11,
-      "size_bytes": 2125
+      "size_bytes": 1971
     },
     "x_ads_campaigns.csv.manifest": {
       "columns": null,
-      "hash": "sha256:8186b2211cdd60458b4c489971475532efc2f7bb66edc6714bd9dd3a5fdd2e10",
+      "hash": "sha256:4393b64aa504943d87a907789f2462b29494807ef18a261686311f583a8e4621",
       "row_count": null,
-      "size_bytes": 1883
+      "size_bytes": 1894
     },
     "x_ads_line_items.csv": {
       "columns": [
@@ -43,14 +43,14 @@
         "",
         "",
         "",
-        "REDACTED",
+        "0",
         "AUTO",
         "iuyql",
         "[\"IAB3-4\"]",
         "2022-11-11T08:26:52Z",
         "MANUAL",
         "EUR",
-        "REDACTED",
+        "0",
         "false",
         "",
         "2022-11-29T23:00:00Z",
@@ -67,19 +67,19 @@
         "PROMOTED_TWEETS",
         "true",
         "2022-11-11T08:03:45Z",
-        "REDACTED",
-        "REDACTED",
+        "0",
+        "0",
         "2022-11-11T08:26:52Z"
       ],
-      "hash": "sha256:246ae2fca44f8023a1b201f985da281733c9776cb96db2ce98e69ab70832419e",
+      "hash": "sha256:252f423a274541d298ba89a3bde03e8bc05ccc9476c2f08e81bd40e915afa742",
       "row_count": 13,
-      "size_bytes": 3874
+      "size_bytes": 3510
     },
     "x_ads_line_items.csv.manifest": {
       "columns": null,
-      "hash": "sha256:853e7e5d6e916c26f02fc2ac83bda14e32a94a1362d98fd617a590c51a7d33f5",
+      "hash": "sha256:74f84c56cc5f080bfb0afaf027958625cf4796e2d1648408ae4113e09c701cea",
       "row_count": null,
-      "size_bytes": 3226
+      "size_bytes": 3244
     },
     "x_ads_promoted_tweets.csv": {
       "columns": [
@@ -99,9 +99,9 @@
     },
     "x_ads_promoted_tweets.csv.manifest": {
       "columns": null,
-      "hash": "sha256:f1af5ad5dc03d0ff5fc4efc0f5f527c66c94ecbf638d3d6ffd03109447cfa2b9",
+      "hash": "sha256:04f2e528b0be0d096af2d7e3b41d9f40a14cd5e849bbcc86d6a5ee8464ab824e",
       "row_count": null,
-      "size_bytes": 943
+      "size_bytes": 950
     }
   },
   "version": "1.0"
