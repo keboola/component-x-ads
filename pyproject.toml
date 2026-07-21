@@ -21,11 +21,6 @@ dev = [
     "pytest>=9.0.2",
     "ruff>=0.15.2",
     "ty>=0.0.24",
-    # vcrpy 8.2.0+ added a `request_url` param to VCRHTTPResponse.__init__ that
-    # keboola.vcr 0.5.0's recorder monkeypatch passes through positionally and
-    # crashes on (keboola.vcr declares vcrpy<9 but is only compatible up to 8.1.1).
-    # Pin to 8.1.1 until keboola.vcr supports the newer signature.
-    "vcrpy==8.1.1",
 ]
 
 [tool.ruff]
