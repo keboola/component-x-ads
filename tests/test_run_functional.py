@@ -25,7 +25,7 @@ def _write_datadir(tmp_path: Path, analytics_enabled: bool) -> Path:
             "#access_token": "at",
             "#access_token_secret": "ats",
             "account_ids": ["18ce"],
-            "objects": ["campaigns"],
+            "object": "campaigns",
             "analytics": {
                 "enabled": analytics_enabled,
                 "entities": ["LINE_ITEM"],
@@ -122,7 +122,7 @@ def test_run_without_accounts_raises(tmp_path):
                     "#access_token": "at",
                     "#access_token_secret": "ats",
                     "account_ids": [],
-                    "objects": ["campaigns"],
+                    "object": "campaigns",
                 }
             }
         )

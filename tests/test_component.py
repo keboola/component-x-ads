@@ -24,7 +24,7 @@ def _cfg(**overrides):
         "#access_token": "at",
         "#access_token_secret": "ats",
         "account_ids": ["18ce"],
-        "objects": ["campaigns"],
+        "object": "campaigns",
     }
     params.update(overrides)
     return Configuration(**params)
@@ -45,7 +45,7 @@ def test_extract_entities_accounts_filters_to_configured_ids():
         captured.update(name=writer.name, pk=primary_key, rows=list(writer.rows()))
 
     comp._finalize_table = _finalize
-    comp._extract_entities(_cfg(objects=["accounts"], account_ids=["18ce"]))
+    comp._extract_entities(_cfg(object="accounts", account_ids=["18ce"]))
     assert captured["name"] == "x_ads_accounts"
     assert captured["pk"] == ["id"]
     assert [r["id"] for r in captured["rows"]] == ["18ce"]
@@ -61,7 +61,7 @@ def test_extract_entities_account_scoped_adds_account_id_and_pk():
         captured.update(name=writer.name, pk=primary_key, rows=list(writer.rows()))
 
     comp._finalize_table = _finalize
-    comp._extract_entities(_cfg(objects=["campaigns"], account_ids=["18ce"]))
+    comp._extract_entities(_cfg(object="campaigns", account_ids=["18ce"]))
     assert captured["name"] == "x_ads_campaigns"
     assert captured["pk"] == ["account_id", "id"]
     assert all(r["account_id"] == "18ce" for r in captured["rows"])

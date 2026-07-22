@@ -140,7 +140,7 @@ class Component(ComponentBase):
         run_started_at = datetime.now(UTC)
         previous_state = self.get_state_file() or {}
 
-        if cfg.objects:
+        if cfg.entity_object:
             self._extract_entities(cfg)
 
         if cfg.analytics.enabled:
@@ -154,30 +154,31 @@ class Component(ComponentBase):
     def _validate_run_config(cfg: Configuration) -> None:
         if not cfg.account_ids:
             raise UserException("No X Ads account IDs configured. Add at least one account_id.")
-        if not cfg.objects and not cfg.analytics.enabled:
-            raise UserException("Nothing to extract: select at least one object or enable analytics.")
+        if not cfg.entity_object and not cfg.analytics.enabled:
+            raise UserException("Nothing to extract: select an object or enable analytics.")
 
     # ------------------------------------------------------------ entities
 
     def _extract_entities(self, cfg: Configuration) -> None:
-        for obj in cfg.objects:
-            writer = _TableWriter(f"x_ads_{obj.value}")
-            try:
-                if obj == EntityObject.accounts:
-                    for account in self._client.list_accounts():
-                        if account.get("id") in cfg.account_ids:
-                            writer.write(self._flatten_record(account))
-                else:
-                    for account_id in cfg.account_ids:
-                        for record in self._client.list_account_entities(account_id, obj.value):
-                            flat = self._flatten_record(record)
-                            flat["account_id"] = account_id
-                            writer.write(flat)
+        obj = cfg.entity_object
+        assert obj is not None  # guarded by run(); one object per config row
+        writer = _TableWriter(f"x_ads_{obj.value}")
+        try:
+            if obj == EntityObject.accounts:
+                for account in self._client.list_accounts():
+                    if account.get("id") in cfg.account_ids:
+                        writer.write(self._flatten_record(account))
+            else:
+                for account_id in cfg.account_ids:
+                    for record in self._client.list_account_entities(account_id, obj.value):
+                        flat = self._flatten_record(record)
+                        flat["account_id"] = account_id
+                        writer.write(flat)
 
-                pk = ["id"] if obj == EntityObject.accounts else ["account_id", "id"]
-                self._finalize_table(writer, primary_key=pk, incremental=cfg.incremental)
-            finally:
-                writer.close()
+            pk = ["id"] if obj == EntityObject.accounts else ["account_id", "id"]
+            self._finalize_table(writer, primary_key=pk, incremental=cfg.incremental)
+        finally:
+            writer.close()
 
     # ----------------------------------------------------------- analytics
 
@@ -267,7 +268,7 @@ class Component(ComponentBase):
         tz_name = self._client.get_account(account_id).get("timezone") or "UTC"
         try:
             return ZoneInfo(tz_name)
-        except (ZoneInfoNotFoundError, ValueError):
+        except ZoneInfoNotFoundError, ValueError:
             logging.warning("Unknown account timezone %r for %s; falling back to UTC.", tz_name, account_id)
             return ZoneInfo("UTC")
 
@@ -298,7 +299,7 @@ class Component(ComponentBase):
             return None
         try:
             return datetime.fromisoformat(last).astimezone(zone).date()
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             logging.warning("Ignoring unreadable %s state value %r; using the default window.", _STATE_LAST_RUN, last)
             return None
 

@@ -8,11 +8,7 @@
     "account_ids": [
       "18ce55he0li"
     ],
-    "objects": [
-      "campaigns",
-      "line_items",
-      "promoted_tweets"
-    ],
+    "object": "campaigns",
     "load_type": "full_load"
   }
 }

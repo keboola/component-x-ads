@@ -11,7 +11,7 @@ from enum import StrEnum
 from typing import Any
 
 from keboola.component.exceptions import UserException
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, computed_field, field_validator, model_validator
 
 
 class EntityObject(StrEnum):
@@ -128,9 +128,16 @@ class Configuration(Credentials):
     """Top-level component configuration."""
 
     account_ids: list[str] = Field(default_factory=list)
-    objects: list[EntityObject] = Field(default_factory=list)
+    # One entity object per config row (single-select dropdown). Optional: a row may be
+    # analytics-only. The UI sends "" for the empty choice, which we coerce to None.
+    entity_object: EntityObject | None = Field(default=None, alias="object")
     analytics: Analytics = Field(default_factory=Analytics)
     load_type: LoadType = LoadType.incremental_load
+
+    @field_validator("entity_object", mode="before")
+    @classmethod
+    def _blank_object_is_none(cls, v: Any) -> Any:
+        return v or None
 
     @computed_field
     @property

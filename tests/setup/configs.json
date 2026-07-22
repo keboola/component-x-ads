@@ -27,7 +27,7 @@
   },
   {
     "name": "03_run_entities",
-    "description": "Extract campaigns, line items and promoted tweets (full load)",
+    "description": "Extract a single entity object (campaigns, full load)",
     "config": {
       "action": "run",
       "parameters": {
@@ -36,7 +36,7 @@
         "#access_token": "DUMMY",
         "#access_token_secret": "DUMMY",
         "account_ids": ["18ce55he0li"],
-        "objects": ["campaigns", "line_items", "promoted_tweets"],
+        "object": "campaigns",
         "load_type": "full_load"
       }
     }
@@ -52,7 +52,7 @@
         "#access_token": "DUMMY",
         "#access_token_secret": "DUMMY",
         "account_ids": ["18ce55he0li"],
-        "objects": ["campaigns"],
+        "object": "campaigns",
         "analytics": {
           "enabled": true,
           "entities": ["LINE_ITEM"],
@@ -77,7 +77,7 @@
         "#access_token": "DUMMY",
         "#access_token_secret": "DUMMY",
         "account_ids": [],
-        "objects": ["campaigns"]
+        "object": "campaigns"
       }
     }
   }

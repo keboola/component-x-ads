@@ -2,28 +2,25 @@
   "type": "object",
   "title": "X Ads Extractor row configuration",
   "properties": {
-    "objects": {
-      "type": "array",
-      "title": "Objects to extract",
-      "items": {
-        "type": "string",
-        "enum": [
-          "accounts",
-          "funding_instruments",
-          "campaigns",
-          "line_items",
-          "promoted_tweets",
-          "promoted_accounts",
-          "media_creatives"
-        ]
-      },
-      "format": "select",
-      "uniqueItems": true,
-      "default": [],
-      "description": "Campaign-management entities to extract as tables.",
+    "object": {
+      "type": "string",
+      "title": "Object to extract",
+      "enum": [
+        "",
+        "accounts",
+        "funding_instruments",
+        "campaigns",
+        "line_items",
+        "promoted_tweets",
+        "promoted_accounts",
+        "media_creatives"
+      ],
+      "default": "",
+      "description": "Campaign-management entity to extract as a table. Leave unselected for an analytics-only row.",
       "propertyOrder": 1,
       "options": {
         "enum_titles": [
+          "— None (analytics only) —",
           "Accounts",
           "Funding Instruments",
           "Campaigns",

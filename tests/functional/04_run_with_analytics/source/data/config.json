@@ -8,9 +8,7 @@
     "account_ids": [
       "18ce55he0li"
     ],
-    "objects": [
-      "campaigns"
-    ],
+    "object": "campaigns",
     "analytics": {
       "enabled": true,
       "entities": [

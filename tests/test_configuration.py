@@ -11,7 +11,7 @@ def _base_params(**overrides):
         "#access_token": "at",
         "#access_token_secret": "ats",
         "account_ids": ["18ce54d4x5t"],
-        "objects": ["campaigns"],
+        "object": "campaigns",
     }
     params.update(overrides)
     return params
