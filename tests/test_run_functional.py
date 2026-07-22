@@ -104,6 +104,11 @@ def test_run_writes_entity_and_analytics_tables(tmp_path):
     ]
     stats_rows = _read_csv(stats)
     assert len(stats_rows) == 2  # two daily buckets
+    # The stats rows are unsegmented (segment is None) — the blank PK cell must be
+    # written as the placeholder, never empty, or the typed-table load would fail
+    # ("NULL in a non-nullable column").
+    seg_idx = _columns(stats_manifest).index("segment")
+    assert all(row[seg_idx] == "__empty__" for row in stats_rows)
 
     # State advanced
     state = json.loads((datadir / "out" / "state.json").read_text())

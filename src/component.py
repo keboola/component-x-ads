@@ -53,6 +53,12 @@ VCR_SANITIZERS = [
 
 _STATE_LAST_RUN = "last_run"
 
+# Placeholder written for an otherwise-empty primary-key cell. Keboola typed-table
+# primary-key columns are physically NOT NULL, and an empty CSV field imports as
+# NULL — so a blank PK value (e.g. an unsegmented stats row whose `segment` is
+# empty) fails the storage load. See _serialize_cell.
+_EMPTY_PK_PLACEHOLDER = "__empty__"
+
 # Max window a single async job may span (non-segmented). We chunk larger ranges.
 _MAX_JOB_WINDOW_DAYS = 90
 
@@ -394,10 +400,11 @@ class Component(ComponentBase):
         table = self.create_out_table_definition(
             f"{writer.name}.csv", primary_key=primary_key, incremental=incremental, schema=schema
         )
+        pk_columns = set(primary_key)
         with open(table.full_path, "w", encoding="utf-8", newline="") as fh:
             csv_writer = csv.writer(fh)
             for row in writer.rows():
-                csv_writer.writerow([self._serialize(row.get(col, "")) for col in columns])
+                csv_writer.writerow([self._serialize_cell(row.get(col, ""), col in pk_columns) for col in columns])
         self.write_manifest(table)
         logging.info("Wrote %d rows to %s.", writer.count, writer.name)
 
@@ -427,6 +434,17 @@ class Component(ComponentBase):
         if isinstance(value, bool):
             return "true" if value else "false"
         return value
+
+    @staticmethod
+    def _serialize_cell(value: object, is_primary_key: bool) -> object:
+        # A primary-key column must never be empty: Keboola imports an empty CSV
+        # field as NULL and PK columns are NOT NULL, so a blank PK value fails the
+        # load. Emit a stable, non-empty placeholder so the row upserts under a
+        # deterministic key (only PK cells are touched; other blanks stay empty).
+        serialized = Component._serialize(value)
+        if is_primary_key and (serialized is None or serialized == ""):
+            return _EMPTY_PK_PLACEHOLDER
+        return serialized
 
     # --------------------------------------------------------------- utils
 
