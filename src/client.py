@@ -1,7 +1,8 @@
 """HTTP client for the X Ads API (v12).
 
-Handles OAuth 1.0a request signing, cursor-based pagination, retry/back-off for
-transient failures (network errors + 429/5xx) and the asynchronous analytics job
+Handles OAuth 1.0a request signing, cursor-based pagination, tenacity-driven
+retry/back-off for transient failures (network errors + 429/5xx, honouring X's
+rate-limit-reset / retry-after headers) and the asynchronous analytics job
 workflow (create -> poll -> download gzipped JSON).
 
 All network access lives here; ``component.py`` stays a thin orchestrator.
@@ -19,6 +20,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
+import tenacity
 from keboola.component.exceptions import UserException
 from requests_oauthlib import OAuth1
 
@@ -39,9 +41,28 @@ _JOB_POLL_TIMEOUT_S = 30 * 60
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 _USER_ERROR_STATUS = {400, 404, 422}
 
+# Fallback wait when the API doesn't tell us how long to hold off (i.e. non-429/503
+# transient statuses and network errors): exponential back-off with jitter, capped.
+_FALLBACK_WAIT = tenacity.wait_exponential_jitter(initial=1, max=_MAX_BACKOFF_S)
+
 
 class XAdsClientError(Exception):
     """Unexpected API failure (bubbles up as exit code 2)."""
+
+
+class _TransientError(Exception):
+    """Internal marker for a retryable failure (network error or 429/5xx).
+
+    Carries the explicit back-off ``wait`` X asked for (rate-limit-reset / retry-after)
+    when available, plus the ``status`` or the underlying network ``cause`` so the
+    retry-exhausted message can be specific.
+    """
+
+    def __init__(self, *, wait: float | None = None, status: int | None = None, cause: Exception | None = None) -> None:
+        self.wait = wait
+        self.status = status
+        self.cause = cause
+        super().__init__(f"transient X Ads API failure (status={status})")
 
 
 class XAdsClient:
@@ -69,80 +90,95 @@ class XAdsClient:
 
     def _request(self, method: str, path: str, params: dict[str, Any] | None = None) -> requests.Response:
         url = f"{BASE_URL}/{path.lstrip('/')}"
-        last_status: int | None = None
-        last_exc: Exception | None = None
-
-        for attempt in range(_MAX_RETRIES):
-            try:
-                resp = self._session.request(method, url, params=params, timeout=self._timeout)
-            except requests.RequestException as exc:
-                # Transport failure (connection/timeout/TLS). Retry with back-off.
-                last_exc, last_status = exc, None
-                if attempt == _MAX_RETRIES - 1:
-                    break
-                wait = self._backoff_seconds(attempt)
-                logging.warning("Network error on %s (%s); retrying in %ss.", path, type(exc).__name__, wait)
-                time.sleep(wait)
-                continue
-
-            if resp.status_code in _TRANSIENT_STATUS:
-                last_exc, last_status = None, resp.status_code
-                if attempt == _MAX_RETRIES - 1:
-                    break
-                wait = self._retry_wait_seconds(resp, attempt)
-                logging.warning("Transient HTTP %s on %s; retrying in %ss.", resp.status_code, path, wait)
-                time.sleep(wait)
-                continue
-
-            if resp.status_code == 401:
-                raise UserException(
-                    "Authentication failed (401). Check your X Ads API credentials (consumer key/secret, "
-                    "access token/secret) and that the developer App is approved for the Ads API."
-                )
-            if resp.status_code == 403:
-                logging.debug("403 response body for %s: %s", path, self._error_detail(resp))
-                raise UserException(
-                    f"Access forbidden (403) on '{path}'. The account may lack Ads API access or the token "
-                    f"user may not have permission for this account."
-                )
-            if resp.status_code in _USER_ERROR_STATUS:
-                logging.debug("HTTP %s response body for %s: %s", resp.status_code, path, self._error_detail(resp))
-                raise UserException(
-                    f"Request to '{path}' was rejected (HTTP {resp.status_code}). This usually means a "
-                    f"configuration problem (invalid parameter, unsupported value or missing resource)."
-                )
-            if not resp.ok:
-                logging.debug("HTTP %s response body for %s: %s", resp.status_code, path, self._error_detail(resp))
-                raise XAdsClientError(f"{method} {path} failed with HTTP {resp.status_code}.")
-            return resp
-
-        # Retries exhausted. A persistent network/transient-status failure is almost always a
-        # temporary service or rate-limit condition, so surface it as a user-actionable error
-        # (exit 1) rather than an opaque internal crash (exit 2).
-        if last_exc is not None:
-            raise UserException(
-                f"Could not reach the X Ads API for '{path}' after {_MAX_RETRIES} attempts "
-                f"({type(last_exc).__name__}). This is usually a temporary network or service issue — "
-                f"please try again later."
-            ) from last_exc
-        raise UserException(
-            f"The X Ads API kept returning transient errors (last HTTP {last_status}) for '{path}' after "
-            f"{_MAX_RETRIES} attempts. This is usually a temporary rate-limit or service issue — please try again later."
+        retryer = tenacity.Retrying(
+            retry=tenacity.retry_if_exception_type(_TransientError),
+            stop=tenacity.stop_after_attempt(_MAX_RETRIES),
+            wait=self._retry_wait,
+            sleep=time.sleep,
+            before_sleep=self._log_retry,
+            reraise=False,
         )
+        try:
+            return retryer(self._attempt_request, method, url, path, params)
+        except tenacity.RetryError as err:
+            # Retries exhausted on a transient failure -> surface as a user-actionable
+            # error (exit 1) rather than an opaque internal crash (exit 2).
+            transient = err.last_attempt.exception()
+            raise self._exhausted_error(path, transient) from transient
 
-    def _retry_wait_seconds(self, resp: requests.Response, attempt: int) -> int:
+    def _attempt_request(self, method: str, url: str, path: str, params: dict[str, Any] | None) -> requests.Response:
+        """Perform a single request. Raises ``_TransientError`` on retryable failures,
+        ``UserException`` on user-fixable ones, and returns the response on success."""
+        try:
+            resp = self._session.request(method, url, params=params, timeout=self._timeout)
+        except requests.RequestException as exc:
+            # Transport failure (connection/timeout/TLS): retryable with exponential back-off.
+            raise _TransientError(cause=exc) from exc
+
+        if resp.status_code in _TRANSIENT_STATUS:
+            raise _TransientError(status=resp.status_code, wait=self._transient_wait(resp))
+        if resp.status_code == 401:
+            raise UserException(
+                "Authentication failed (401). Check your X Ads API credentials (consumer key/secret, "
+                "access token/secret) and that the developer App is approved for the Ads API."
+            )
+        if resp.status_code == 403:
+            logging.debug("403 response body for %s: %s", path, self._error_detail(resp))
+            raise UserException(
+                f"Access forbidden (403) on '{path}'. The account may lack Ads API access or the token "
+                f"user may not have permission for this account."
+            )
+        if resp.status_code in _USER_ERROR_STATUS:
+            logging.debug("HTTP %s response body for %s: %s", resp.status_code, path, self._error_detail(resp))
+            raise UserException(
+                f"Request to '{path}' was rejected (HTTP {resp.status_code}). This usually means a "
+                f"configuration problem (invalid parameter, unsupported value or missing resource)."
+            )
+        if not resp.ok:
+            logging.debug("HTTP %s response body for %s: %s", resp.status_code, path, self._error_detail(resp))
+            raise XAdsClientError(f"{method} {path} failed with HTTP {resp.status_code}.")
+        return resp
+
+    @staticmethod
+    def _retry_wait(retry_state: tenacity.RetryCallState) -> float:
+        # Honour the back-off X asked for (x-rate-limit-reset on 429, retry-after on 503);
+        # otherwise fall back to exponential back-off with jitter.
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        explicit = getattr(exc, "wait", None)
+        if explicit is not None:
+            return explicit
+        return _FALLBACK_WAIT(retry_state)
+
+    @staticmethod
+    def _log_retry(retry_state: tenacity.RetryCallState) -> None:
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        label = getattr(exc, "status", None) or type(getattr(exc, "cause", exc)).__name__
+        logging.warning("Transient X Ads API failure (%s); retry %d.", label, retry_state.attempt_number)
+
+    def _transient_wait(self, resp: requests.Response) -> float | None:
         if resp.status_code == 429:
             return self._rate_limit_wait_seconds(resp)
         if resp.status_code == 503:
             try:
-                return int(resp.headers.get("retry-after", _DEFAULT_RETRY_WAIT_S))
+                return float(resp.headers.get("retry-after", _DEFAULT_RETRY_WAIT_S))
             except ValueError:
                 return _DEFAULT_RETRY_WAIT_S
-        return self._backoff_seconds(attempt)
+        return None  # 500/502/504 -> exponential fallback
 
     @staticmethod
-    def _backoff_seconds(attempt: int) -> int:
-        return min(2**attempt, _MAX_BACKOFF_S)
+    def _exhausted_error(path: str, transient: BaseException | None) -> UserException:
+        cause = getattr(transient, "cause", None)
+        if cause is not None:
+            return UserException(
+                f"Could not reach the X Ads API for '{path}' after {_MAX_RETRIES} attempts "
+                f"({type(cause).__name__}). This is usually a temporary network or service issue — "
+                f"please try again later."
+            )
+        status = getattr(transient, "status", None)
+        return UserException(
+            f"The X Ads API kept returning transient errors (last HTTP {status}) for '{path}' after "
+            f"{_MAX_RETRIES} attempts. This is usually a temporary rate-limit or service issue — please try again later."
+        )
 
     @staticmethod
     def _rate_limit_wait_seconds(resp: requests.Response) -> int:

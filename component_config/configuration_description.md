@@ -1,4 +1,4 @@
-## Authentication
+### Authentication
 
 Provide the four OAuth 1.0a credentials from your X developer App (which must be approved for the Ads API):
 
@@ -9,7 +9,7 @@ Use **Test Connection** to verify the credentials.
 
 - **Ad Accounts** — select the X Ads account(s) to extract from. This selection is shared by every row.
 
-## Rows — one per extraction
+### Rows — one per extraction
 
 This component is **row-based**: the authentication and account selection above live on the main
 configuration, and each **row** defines one independent extraction that runs on its own (in row order,

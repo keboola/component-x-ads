@@ -40,9 +40,11 @@ def test_extract_entities_accounts_filters_to_configured_ids():
         {"id": "other", "name": "Drop"},
     ]
     captured: dict = {}
-    comp._write_table = lambda name, rows, primary_key, incremental, **kw: captured.update(
-        name=name, rows=rows, pk=primary_key
-    )
+
+    def _finalize(writer, primary_key, incremental, typed=True):
+        captured.update(name=writer.name, pk=primary_key, rows=list(writer.rows()))
+
+    comp._finalize_table = _finalize
     comp._extract_entities(_cfg(objects=["accounts"], account_ids=["18ce"]))
     assert captured["name"] == "x_ads_accounts"
     assert captured["pk"] == ["id"]
@@ -54,9 +56,11 @@ def test_extract_entities_account_scoped_adds_account_id_and_pk():
     comp._client = mock.Mock()
     comp._client.list_account_entities.return_value = iter([{"id": "c1"}, {"id": "c2"}])
     captured: dict = {}
-    comp._write_table = lambda name, rows, primary_key, incremental, **kw: captured.update(
-        name=name, rows=rows, pk=primary_key
-    )
+
+    def _finalize(writer, primary_key, incremental, typed=True):
+        captured.update(name=writer.name, pk=primary_key, rows=list(writer.rows()))
+
+    comp._finalize_table = _finalize
     comp._extract_entities(_cfg(objects=["campaigns"], account_ids=["18ce"]))
     assert captured["name"] == "x_ads_campaigns"
     assert captured["pk"] == ["account_id", "id"]
@@ -71,12 +75,31 @@ def test_flatten_record_serializes_nested():
     assert flat["tags"] == "[1, 2]"
 
 
-def test_collect_columns_pk_first_then_sorted():
+def test_order_columns_pk_first_then_sorted():
     comp = _component()
-    rows = [{"id": "1", "z": 1}, {"id": "2", "a": 3}]
-    cols = comp._collect_columns(rows, ["account_id", "id"])
-    # PK first (in given order), then remaining columns alphabetically — deterministic.
+    # Column superset as tracked by _TableWriter (insertion-ordered); PK first (in the
+    # given order), then remaining columns alphabetically — deterministic.
+    seen = {"id": None, "z": None, "a": None}
+    cols = comp._order_columns(seen, ["account_id", "id"])
     assert cols == ["account_id", "id", "a", "z"]
+
+
+def test_table_writer_spools_and_streams_back(tmp_path):
+    from component import _TableWriter
+
+    writer = _TableWriter("x_ads_demo")
+    try:
+        writer.write({"id": "1", "z": 1})
+        writer.write({"id": "2", "a": 3, "flag": True})
+        assert writer.count == 2
+        assert set(writer.columns) == {"id", "z", "a", "flag"}
+        rows = list(writer.rows())
+        assert rows[0] == {"id": "1", "z": 1}
+        assert rows[1] == {"id": "2", "a": 3, "flag": True}
+    finally:
+        writer.close()
+    # temp spool is removed on close
+    assert not writer.path.exists()
 
 
 def test_serialize_bool_and_none():

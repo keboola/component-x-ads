@@ -8,6 +8,7 @@ re-raised as a ``UserException`` so the platform surfaces it as a user error
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from keboola.component.exceptions import UserException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, computed_field, model_validator
@@ -115,7 +116,7 @@ class Credentials(BaseModel):
     access_token: str = Field(alias="#access_token")
     access_token_secret: str = Field(alias="#access_token_secret")
 
-    def __init__(self, **data):
+    def __init__(self, **data: Any) -> None:
         try:
             super().__init__(**data)
         except ValidationError as e:

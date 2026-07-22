@@ -10,8 +10,10 @@ from __future__ import annotations
 import csv
 import json
 import logging
-from collections.abc import Iterator
+import tempfile
+from collections.abc import Iterable, Iterator
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -70,6 +72,49 @@ _TIMESTAMP_COLUMNS = frozenset({"created_at", "updated_at", "start_time", "end_t
 _BOOLEAN_COLUMNS = frozenset({"deleted", "servable", "standard_delivery"})
 
 
+class _TableWriter:
+    """Spools rows to a temp NDJSON file while tracking the column superset.
+
+    Lets a table be produced without holding every row in memory: rows are appended
+    to disk as they are fetched (bounded memory = one row + the header key-set), then
+    streamed back into the output CSV by :meth:`Component._finalize_table`. Needed
+    because large pulls (many accounts × HOUR-granularity stats) can be huge.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.columns: dict[str, None] = {}  # insertion-ordered set of every key seen
+        self.count = 0
+        self._fh = tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix=f"{name}_",
+            suffix=".ndjson",
+            dir=tempfile.gettempdir(),
+            delete=False,
+            encoding="utf-8",
+            newline="",
+        )
+        self.path = Path(self._fh.name)
+
+    def write(self, row: dict[str, Any]) -> None:
+        for key in row:
+            self.columns.setdefault(key, None)
+        self._fh.write(json.dumps(row))
+        self._fh.write("\n")
+        self.count += 1
+
+    def rows(self) -> Iterator[dict[str, Any]]:
+        self._fh.flush()
+        with self.path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    yield json.loads(line)
+
+    def close(self) -> None:
+        self._fh.close()
+        self.path.unlink(missing_ok=True)
+
+
 class Component(ComponentBase):
     def __init__(self) -> None:
         super().__init__()
@@ -116,57 +161,62 @@ class Component(ComponentBase):
 
     def _extract_entities(self, cfg: Configuration) -> None:
         for obj in cfg.objects:
-            rows: list[dict[str, Any]] = []
-            if obj == EntityObject.accounts:
-                for account in self._client.list_accounts():
-                    if account.get("id") in cfg.account_ids:
-                        rows.append(self._flatten_record(account))
-            else:
-                for account_id in cfg.account_ids:
-                    for record in self._client.list_account_entities(account_id, obj.value):
-                        flat = self._flatten_record(record)
-                        flat["account_id"] = account_id
-                        rows.append(flat)
+            writer = _TableWriter(f"x_ads_{obj.value}")
+            try:
+                if obj == EntityObject.accounts:
+                    for account in self._client.list_accounts():
+                        if account.get("id") in cfg.account_ids:
+                            writer.write(self._flatten_record(account))
+                else:
+                    for account_id in cfg.account_ids:
+                        for record in self._client.list_account_entities(account_id, obj.value):
+                            flat = self._flatten_record(record)
+                            flat["account_id"] = account_id
+                            writer.write(flat)
 
-            pk = ["id"] if obj == EntityObject.accounts else ["account_id", "id"]
-            self._write_table(f"x_ads_{obj.value}", rows, primary_key=pk, incremental=cfg.incremental)
+                pk = ["id"] if obj == EntityObject.accounts else ["account_id", "id"]
+                self._finalize_table(writer, primary_key=pk, incremental=cfg.incremental)
+            finally:
+                writer.close()
 
     # ----------------------------------------------------------- analytics
 
     def _extract_analytics(self, cfg: Configuration, previous_state: dict[str, Any]) -> None:
         a = cfg.analytics
         metric_groups = [m.value for m in a.metric_groups]
-        rows_by_entity: dict[StatsEntity, list[dict[str, Any]]] = {entity: [] for entity in a.entities}
+        # One spooling writer per stats entity; rows are streamed to disk as each async
+        # job completes rather than accumulated in memory across all accounts/windows.
+        writers = {entity: _TableWriter(f"x_ads_stats_{entity.value.lower()}") for entity in a.entities}
+        try:
+            # The analytics window must align to midnight in the account's timezone, and that
+            # timezone can differ per account — so resolve it and build the window per account.
+            for account_id in cfg.account_ids:
+                zone = self._account_zone(account_id)
+                start_date, end_date = self._analytics_window(cfg, previous_state, zone)
+                windows = self._split_windows(start_date, end_date)
+                if not windows:
+                    logging.info(
+                        "Analytics for account %s already up to date (%s..%s); nothing to fetch.",
+                        account_id,
+                        start_date,
+                        end_date,
+                    )
+                    continue
+                for entity in a.entities:
+                    for row in self._iter_entity_stats(cfg, account_id, entity, metric_groups, windows, zone):
+                        writers[entity].write(row)
 
-        # The analytics window must align to midnight in the account's timezone, and that
-        # timezone can differ per account — so resolve it and build the window per account.
-        for account_id in cfg.account_ids:
-            zone = self._account_zone(account_id)
-            start_date, end_date = self._analytics_window(cfg, previous_state, zone)
-            windows = self._split_windows(start_date, end_date)
-            if not windows:
-                logging.info(
-                    "Analytics for account %s already up to date (%s..%s); nothing to fetch.",
-                    account_id,
-                    start_date,
-                    end_date,
-                )
-                continue
-            for entity in a.entities:
-                rows_by_entity[entity].extend(
-                    self._collect_entity_stats(cfg, account_id, entity, metric_groups, windows, zone)
-                )
-
-        for entity, rows in rows_by_entity.items():
             pk = ["account_id", "entity_type", "entity_id", "segment", "placement", "date"]
-            # Stats columns are heterogeneous (metric families vary per group, values
-            # can be null/JSON-serialized arrays), so they stay STRING — native typing
-            # applies only to the entity tables with known, stable column types.
-            self._write_table(
-                f"x_ads_stats_{entity.value.lower()}", rows, primary_key=pk, incremental=cfg.incremental, typed=False
-            )
+            for writer in writers.values():
+                # Stats columns are heterogeneous (metric families vary per group, values
+                # can be null/JSON-serialized arrays), so they stay STRING — native typing
+                # applies only to the entity tables with known, stable column types.
+                self._finalize_table(writer, primary_key=pk, incremental=cfg.incremental, typed=False)
+        finally:
+            for writer in writers.values():
+                writer.close()
 
-    def _collect_entity_stats(
+    def _iter_entity_stats(
         self,
         cfg: Configuration,
         account_id: str,
@@ -174,10 +224,9 @@ class Component(ComponentBase):
         metric_groups: list[str],
         windows: list[tuple[date, date]],
         zone: ZoneInfo,
-    ) -> list[dict[str, Any]]:
+    ) -> Iterator[dict[str, Any]]:
         placement = cfg.analytics.placement.value
         granularity = cfg.analytics.granularity.value
-        rows: list[dict[str, Any]] = []
 
         for win_start, win_end in windows:
             start_iso = self._local_midnight_utc(win_start, zone)
@@ -202,10 +251,9 @@ class Component(ComponentBase):
                 )
                 url = self._client.poll_job(account_id, job_id)
                 result = self._client.download_job_result(url)
-                rows.extend(
-                    self._flatten_stats(result, account_id, entity.value, granularity, placement, win_start, zone)
+                yield from self._flatten_stats(
+                    result, account_id, entity.value, granularity, placement, win_start, zone
                 )
-        return rows
 
     def _resolve_entity_ids(self, account_id: str, entity: StatsEntity, start_iso: str, end_iso: str) -> list[str]:
         if entity == StatsEntity.ACCOUNT:
@@ -219,7 +267,7 @@ class Component(ComponentBase):
         tz_name = self._client.get_account(account_id).get("timezone") or "UTC"
         try:
             return ZoneInfo(tz_name)
-        except ZoneInfoNotFoundError, ValueError:
+        except (ZoneInfoNotFoundError, ValueError):
             logging.warning("Unknown account timezone %r for %s; falling back to UTC.", tz_name, account_id)
             return ZoneInfo("UTC")
 
@@ -250,7 +298,7 @@ class Component(ComponentBase):
             return None
         try:
             return datetime.fromisoformat(last).astimezone(zone).date()
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             logging.warning("Ignoring unreadable %s state value %r; using the default window.", _STATE_LAST_RUN, last)
             return None
 
@@ -329,29 +377,28 @@ class Component(ComponentBase):
 
     # -------------------------------------------------------------- output
 
-    def _write_table(
+    def _finalize_table(
         self,
-        name: str,
-        rows: list[dict[str, Any]],
+        writer: _TableWriter,
         primary_key: list[str],
         incremental: bool,
         typed: bool = True,
     ) -> None:
-        if not rows:
-            logging.info("No rows for %s; skipping table.", name)
+        if writer.count == 0:
+            logging.info("No rows for %s; skipping table.", writer.name)
             return
-        columns = self._collect_columns(rows, primary_key)
+        columns = self._order_columns(writer.columns, primary_key)
         base_type = self._base_type_for if typed else (lambda _col: BaseType.string())
         schema = {col: ColumnDefinition(data_types=base_type(col)) for col in columns}
         table = self.create_out_table_definition(
-            f"{name}.csv", primary_key=primary_key, incremental=incremental, schema=schema
+            f"{writer.name}.csv", primary_key=primary_key, incremental=incremental, schema=schema
         )
         with open(table.full_path, "w", encoding="utf-8", newline="") as fh:
-            writer = csv.writer(fh)
-            for row in rows:
-                writer.writerow([self._serialize(row.get(col, "")) for col in columns])
+            csv_writer = csv.writer(fh)
+            for row in writer.rows():
+                csv_writer.writerow([self._serialize(row.get(col, "")) for col in columns])
         self.write_manifest(table)
-        logging.info("Wrote %d rows to %s.", len(rows), name)
+        logging.info("Wrote %d rows to %s.", writer.count, writer.name)
 
     @staticmethod
     def _base_type_for(name: str) -> BaseType:
@@ -364,15 +411,13 @@ class Component(ComponentBase):
         return BaseType.string()
 
     @staticmethod
-    def _collect_columns(rows: list[dict[str, Any]], primary_key: list[str]) -> list[str]:
+    def _order_columns(columns: Iterable[str], primary_key: list[str]) -> list[str]:
         # Deterministic column order: primary key first, then the remaining fields
         # alphabetically. Data-derived order would vary with API response ordering,
         # which is undesirable for a stable incremental schema.
         seen = set(primary_key)
-        extra: set[str] = set()
-        for row in rows:
-            extra.update(key for key in row if key not in seen)
-        return list(primary_key) + sorted(extra)
+        extra = sorted(col for col in columns if col not in seen)
+        return list(primary_key) + extra
 
     @staticmethod
     def _serialize(value: object) -> object:
