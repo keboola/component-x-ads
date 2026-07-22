@@ -63,9 +63,10 @@
           "format": "select",
           "uniqueItems": true,
           "default": [],
-          "description": "Entity levels to pull performance stats for. Each selected level produces an x_ads_stats_&lt;entity&gt; table (e.g. Line Item → per-line-item metrics). Docs: https://docs.x.com/x-ads-api/analytics",
+          "description": "Entity levels to pull performance stats for.",
           "propertyOrder": 2,
           "options": {
+            "tooltip": "Each selected level produces an `x_ads_stats_<entity>` table (e.g. Line Item → per-line-item metrics).  \n\n[X Ads analytics docs](https://docs.x.com/x-ads-api/analytics)",
             "enum_titles": [
               "Account",
               "Funding Instrument",
@@ -100,9 +101,10 @@
             "ENGAGEMENT",
             "BILLING"
           ],
-          "description": "Which metric families to fetch. Engagement = impressions/clicks/likes/retweets/etc.; Billing = spend & billed charges; Video = view quartiles; Media = media views/engagements; Web/Mobile Conversion = conversion events. Docs: https://docs.x.com/x-ads-api/analytics/metrics-and-segmentation",
+          "description": "Which metric families to fetch.",
           "propertyOrder": 3,
           "options": {
+            "tooltip": "**Engagement** — impressions/clicks/likes/retweets/etc.  \n**Billing** — spend & billed charges.  \n**Video** — view quartiles.  \n**Media** — media views/engagements.  \n**Web/Mobile Conversion** — conversion events.  \n\n[X Ads metrics & segmentation docs](https://docs.x.com/x-ads-api/analytics/metrics-and-segmentation)",
             "enum_titles": [
               "Engagement",
               "Billing",
@@ -126,9 +128,10 @@
             "HOUR"
           ],
           "default": "DAY",
-          "description": "Time bucketing for the metrics: Day = one row per day, Hour = one row per hour, Total = a single aggregate over the whole date range.",
+          "description": "Time bucketing for the metrics.",
           "propertyOrder": 4,
           "options": {
+            "tooltip": "**Day** — one row per day.  \n**Hour** — one row per hour.  \n**Total** — a single aggregate over the whole date range.",
             "enum_titles": [
               "Day",
               "Total",
@@ -147,9 +150,10 @@
             "PUBLISHER_NETWORK"
           ],
           "default": "ALL_ON_TWITTER",
-          "description": "Where the ads were served — 'All on Twitter' (on X itself) or the 'Publisher Network' (X Audience Platform / off-X placements). Metrics are reported separately per placement, so pick the surface you want to measure.",
+          "description": "Where the ads were served.",
           "propertyOrder": 5,
           "options": {
+            "tooltip": "**All on Twitter** — on X itself.  \n**Publisher Network** — X Audience Platform / off-X placements.  \n\nMetrics are reported separately per placement, so pick the surface you want to measure.",
             "enum_titles": [
               "All on Twitter",
               "Publisher Network"
