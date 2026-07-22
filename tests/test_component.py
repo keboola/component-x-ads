@@ -231,7 +231,16 @@ def test_chunk_splits_list():
 def test_parse_day_invalid_raises():
     comp = _component()
     with pytest.raises(UserException):
-        comp._parse_day("not-a-date")
+        comp._parse_day("definitely not a date at all")
     with pytest.raises(UserException):
         comp._parse_day(None)
     assert comp._parse_day("2024-05-06") == date(2024, 5, 6)
+
+
+def test_parse_day_accepts_relative_dates():
+    comp = _component()
+    # dateparser handles relative expressions; assert it resolves to a date, deterministically ordered.
+    today = comp._parse_day("today")
+    thirty_ago = comp._parse_day("30 days ago")
+    assert isinstance(today, date) and isinstance(thirty_ago, date)
+    assert (today - thirty_ago).days == 30

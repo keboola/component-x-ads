@@ -123,7 +123,7 @@
           "format": "select",
           "uniqueItems": true,
           "default": [],
-          "description": "Entity types to fetch analytics (stats) for.",
+          "description": "Entity levels to pull performance stats for. Each selected level produces an x_ads_stats_&lt;entity&gt; table (e.g. Line Item → per-line-item metrics). Docs: https://docs.x.com/x-ads-api/analytics",
           "propertyOrder": 2,
           "options": {
             "enum_titles": [
@@ -160,6 +160,7 @@
             "ENGAGEMENT",
             "BILLING"
           ],
+          "description": "Which metric families to fetch. Engagement = impressions/clicks/likes/retweets/etc.; Billing = spend & billed charges; Video = view quartiles; Media = media views/engagements; Web/Mobile Conversion = conversion events. Docs: https://docs.x.com/x-ads-api/analytics/metrics-and-segmentation",
           "propertyOrder": 3,
           "options": {
             "enum_titles": [
@@ -185,6 +186,7 @@
             "HOUR"
           ],
           "default": "DAY",
+          "description": "Time bucketing for the metrics: Day = one row per day, Hour = one row per hour, Total = a single aggregate over the whole date range.",
           "propertyOrder": 4,
           "options": {
             "enum_titles": [
@@ -205,6 +207,7 @@
             "PUBLISHER_NETWORK"
           ],
           "default": "ALL_ON_TWITTER",
+          "description": "Where the ads were served — 'All on Twitter' (on X itself) or the 'Publisher Network' (X Audience Platform / off-X placements). Metrics are reported separately per placement, so pick the surface you want to measure.",
           "propertyOrder": 5,
           "options": {
             "enum_titles": [
@@ -253,11 +256,11 @@
         "start_date": {
           "type": "string",
           "title": "Start date",
-          "description": "Date in YYYY-MM-DD format.",
+          "description": "Window start. Accepts an absolute date (YYYY-MM-DD) or a relative expression like 'yesterday', '30 days ago' or 'last monday'.",
           "propertyOrder": 8,
           "options": {
             "inputAttributes": {
-              "placeholder": "YYYY-MM-DD"
+              "placeholder": "YYYY-MM-DD or e.g. 30 days ago"
             },
             "dependencies": {
               "enabled": true,
@@ -268,11 +271,11 @@
         "end_date": {
           "type": "string",
           "title": "End date",
-          "description": "Date in YYYY-MM-DD format.",
+          "description": "Window end (exclusive). Accepts an absolute date (YYYY-MM-DD) or a relative expression like 'today' or 'yesterday'.",
           "propertyOrder": 9,
           "options": {
             "inputAttributes": {
-              "placeholder": "YYYY-MM-DD"
+              "placeholder": "YYYY-MM-DD or e.g. today"
             },
             "dependencies": {
               "enabled": true,

@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import dateparser
 from keboola.component.base import ComponentBase, sync_action
 from keboola.component.dao import BaseType, ColumnDefinition
 from keboola.component.exceptions import UserException
@@ -375,11 +376,16 @@ class Component(ComponentBase):
     @staticmethod
     def _parse_day(value: str | None) -> date:
         if not value:
-            raise UserException("A date is required but was empty. Expected format YYYY-MM-DD.")
-        try:
-            return datetime.strptime(value, "%Y-%m-%d").date()
-        except TypeError, ValueError:
-            raise UserException(f"Invalid date '{value}'. Expected format YYYY-MM-DD.") from None
+            raise UserException("A date is required but was empty.")
+        # dateparser accepts absolute (YYYY-MM-DD, 2024/01/31, ...) and relative
+        # ("yesterday", "30 days ago", "last monday") date strings.
+        parsed = dateparser.parse(str(value), settings={"RETURN_AS_TIMEZONE_AWARE": False})
+        if parsed is None:
+            raise UserException(
+                f"Could not parse date '{value}'. Use YYYY-MM-DD or a relative date such as "
+                f"'yesterday' or '30 days ago'."
+            )
+        return parsed.date()
 
     @staticmethod
     def _local_midnight_utc(day: date, zone: ZoneInfo) -> str:
