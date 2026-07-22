@@ -5,6 +5,8 @@ re-raised as a ``UserException`` so the platform surfaces it as a user error
 (exit 1) instead of an unexpected crash (exit 2).
 """
 
+from __future__ import annotations
+
 from enum import StrEnum
 
 from keboola.component.exceptions import UserException
@@ -95,22 +97,23 @@ class Analytics(BaseModel):
         return self
 
 
-class Configuration(BaseModel):
-    """Top-level component configuration."""
+class Credentials(BaseModel):
+    """The four OAuth 1.0a secrets, parsed on their own.
+
+    The sync-action path (Test Connection / Load Accounts) only needs credentials,
+    so it validates just this model — an unrelated analytics validation error can
+    never block a credential test.
+    """
 
     # Ignore unknown keys: the platform injects extras (e.g. `debug`) that aren't
-    # part of this model and must not fail validation.
-    model_config = ConfigDict(extra="ignore")
+    # part of this model and must not fail validation. ``populate_by_name`` lets
+    # callers pass either the ``#``-aliased key or the plain field name.
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     consumer_key: str = Field(alias="#consumer_key")
     consumer_secret: str = Field(alias="#consumer_secret")
     access_token: str = Field(alias="#access_token")
     access_token_secret: str = Field(alias="#access_token_secret")
-
-    account_ids: list[str] = Field(default_factory=list)
-    objects: list[EntityObject] = Field(default_factory=list)
-    analytics: Analytics = Field(default_factory=Analytics)
-    load_type: LoadType = LoadType.incremental_load
 
     def __init__(self, **data):
         try:
@@ -118,6 +121,15 @@ class Configuration(BaseModel):
         except ValidationError as e:
             error_messages = [f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors()]
             raise UserException(f"Configuration validation error: {', '.join(error_messages)}") from e
+
+
+class Configuration(Credentials):
+    """Top-level component configuration."""
+
+    account_ids: list[str] = Field(default_factory=list)
+    objects: list[EntityObject] = Field(default_factory=list)
+    analytics: Analytics = Field(default_factory=Analytics)
+    load_type: LoadType = LoadType.incremental_load
 
     @computed_field
     @property

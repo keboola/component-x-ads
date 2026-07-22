@@ -5,6 +5,8 @@ analytics into Keboola Storage. ``run()`` is a thin orchestrator; all HTTP
 access lives in :mod:`client`.
 """
 
+from __future__ import annotations
+
 import csv
 import json
 import logging
@@ -21,7 +23,7 @@ from keboola.component.sync_actions import MessageType, SelectElement, Validatio
 from keboola.vcr import BodyFieldSanitizer, DefaultSanitizer
 
 from client import MAX_ENTITY_IDS_PER_JOB, XAdsClient
-from configuration import Configuration, DateRangeMode, EntityObject, Granularity, StatsEntity
+from configuration import Configuration, Credentials, DateRangeMode, EntityObject, Granularity, StatsEntity
 
 # Picked up automatically by the datadirtest VCR scaffolder during recording.
 # 1) DefaultSanitizer strips the Authorization header carrying the OAuth 1.0a
@@ -71,21 +73,22 @@ _BOOLEAN_COLUMNS = frozenset({"deleted", "servable", "standard_delivery"})
 class Component(ComponentBase):
     def __init__(self) -> None:
         super().__init__()
-        # Parse config and build the API client once, so run() and the sync
-        # actions (separate entrypoints) share one instance. A bad config raises
-        # UserException here -> exit 1 via the entrypoint handler.
-        self._config = Configuration(**self.configuration.parameters)
+        # Parse only the credentials here and build the API client once, shared by
+        # run() and the sync actions (separate entrypoints). Validating just the
+        # credentials keeps Test Connection / Load Accounts from tripping over an
+        # unrelated analytics validation error. run() parses the full Configuration.
+        creds = Credentials(**self.configuration.parameters)
         self._client = XAdsClient(
-            self._config.consumer_key,
-            self._config.consumer_secret,
-            self._config.access_token,
-            self._config.access_token_secret,
+            creds.consumer_key,
+            creds.consumer_secret,
+            creds.access_token,
+            creds.access_token_secret,
         )
 
     # ----------------------------------------------------------------- run
 
     def run(self) -> None:
-        cfg = self._config
+        cfg = Configuration(**self.configuration.parameters)
         self._validate_run_config(cfg)
 
         # Capture the watermark BEFORE fetching so anything changing mid-run is re-fetched next time.
@@ -156,7 +159,12 @@ class Component(ComponentBase):
 
         for entity, rows in rows_by_entity.items():
             pk = ["account_id", "entity_type", "entity_id", "segment", "placement", "date"]
-            self._write_table(f"x_ads_stats_{entity.value.lower()}", rows, primary_key=pk, incremental=cfg.incremental)
+            # Stats columns are heterogeneous (metric families vary per group, values
+            # can be null/JSON-serialized arrays), so they stay STRING — native typing
+            # applies only to the entity tables with known, stable column types.
+            self._write_table(
+                f"x_ads_stats_{entity.value.lower()}", rows, primary_key=pk, incremental=cfg.incremental, typed=False
+            )
 
     def _collect_entity_stats(
         self,
@@ -321,12 +329,20 @@ class Component(ComponentBase):
 
     # -------------------------------------------------------------- output
 
-    def _write_table(self, name: str, rows: list[dict[str, Any]], primary_key: list[str], incremental: bool) -> None:
+    def _write_table(
+        self,
+        name: str,
+        rows: list[dict[str, Any]],
+        primary_key: list[str],
+        incremental: bool,
+        typed: bool = True,
+    ) -> None:
         if not rows:
             logging.info("No rows for %s; skipping table.", name)
             return
         columns = self._collect_columns(rows, primary_key)
-        schema = {col: ColumnDefinition(data_types=self._base_type_for(col)) for col in columns}
+        base_type = self._base_type_for if typed else (lambda _col: BaseType.string())
+        schema = {col: ColumnDefinition(data_types=base_type(col)) for col in columns}
         table = self.create_out_table_definition(
             f"{name}.csv", primary_key=primary_key, incremental=incremental, schema=schema
         )
@@ -416,9 +432,15 @@ class Component(ComponentBase):
 
     @sync_action("listAccounts")
     def list_accounts_action(self) -> list[SelectElement]:
+        try:
+            accounts = self._client.list_accounts()
+        except UserException:
+            raise
+        except Exception as exc:
+            raise UserException(f"Could not load accounts: {exc}") from exc
         return [
             SelectElement(value=acc["id"], label=f"{acc.get('name', acc['id'])} ({acc['id']})")
-            for acc in self._client.list_accounts()
+            for acc in accounts
             if acc.get("id")
         ]
 
@@ -428,7 +450,8 @@ if __name__ == "__main__":
         comp = Component()
         comp.execute_action()
     except UserException as exc:
-        logging.exception(exc)
+        # A user-fixable error — a traceback would only add noise to the job log.
+        logging.error(str(exc))
         exit(1)
     except Exception as exc:
         logging.exception(exc)

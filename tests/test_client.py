@@ -69,12 +69,13 @@ def test_request_401_raises_userexception():
     assert "Authentication failed" in str(exc.value)
 
 
-def test_request_retries_5xx_then_raises_clienterror():
-    # 500/502/503/504 are transient: retried, then surfaced as XAdsClientError (exit 2).
+def test_request_retries_5xx_then_raises_userexception():
+    # 500/502/503/504 are transient: retried, then surfaced as a user-actionable
+    # UserException (exit 1) — a persistent 5xx is a temporary service issue, not a crash.
     client = _client()
     with mock.patch.object(client._session, "request", return_value=FakeResponse(status_code=500, text="boom")):
         with mock.patch("client.time.sleep") as sleep:
-            with pytest.raises(XAdsClientError):
+            with pytest.raises(UserException):
                 client._request("GET", "accounts")
     assert sleep.call_count >= 1  # retried before giving up
 
@@ -97,10 +98,11 @@ def test_request_400_raises_userexception():
 
 
 def test_request_network_error_retried_then_raises():
+    # Persistent transport failure is retried, then surfaced as UserException (exit 1).
     client = _client()
     with mock.patch.object(client._session, "request", side_effect=requests.ConnectionError("boom")):
         with mock.patch("client.time.sleep") as sleep:
-            with pytest.raises(XAdsClientError):
+            with pytest.raises(UserException):
                 client._request("GET", "accounts")
     assert sleep.call_count >= 1
 

@@ -30,6 +30,39 @@ def _cfg(**overrides):
     return Configuration(**params)
 
 
+def test_extract_entities_accounts_filters_to_configured_ids():
+    # The `accounts` object takes the distinct branch: list all accounts, keep only
+    # the configured ids, and write with PK ["id"] (not ["account_id", "id"]).
+    comp = _component()
+    comp._client = mock.Mock()
+    comp._client.list_accounts.return_value = [
+        {"id": "18ce", "name": "Keep"},
+        {"id": "other", "name": "Drop"},
+    ]
+    captured: dict = {}
+    comp._write_table = lambda name, rows, primary_key, incremental, **kw: captured.update(
+        name=name, rows=rows, pk=primary_key
+    )
+    comp._extract_entities(_cfg(objects=["accounts"], account_ids=["18ce"]))
+    assert captured["name"] == "x_ads_accounts"
+    assert captured["pk"] == ["id"]
+    assert [r["id"] for r in captured["rows"]] == ["18ce"]
+
+
+def test_extract_entities_account_scoped_adds_account_id_and_pk():
+    comp = _component()
+    comp._client = mock.Mock()
+    comp._client.list_account_entities.return_value = iter([{"id": "c1"}, {"id": "c2"}])
+    captured: dict = {}
+    comp._write_table = lambda name, rows, primary_key, incremental, **kw: captured.update(
+        name=name, rows=rows, pk=primary_key
+    )
+    comp._extract_entities(_cfg(objects=["campaigns"], account_ids=["18ce"]))
+    assert captured["name"] == "x_ads_campaigns"
+    assert captured["pk"] == ["account_id", "id"]
+    assert all(r["account_id"] == "18ce" for r in captured["rows"])
+
+
 def test_flatten_record_serializes_nested():
     comp = _component()
     flat = comp._flatten_record({"id": "1", "name": "x", "targeting": {"a": 1}, "tags": [1, 2]})

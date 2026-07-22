@@ -293,9 +293,10 @@
         "incremental_load"
       ],
       "default": "incremental_load",
-      "description": "If Full load is used, the destination tables will be overwritten on every run. If Incremental load is used, data will be upserted based on primary key.",
+      "description": "How data is written to the destination tables.",
       "propertyOrder": 9,
       "options": {
+        "tooltip": "**Full load** overwrites the destination tables on every run.\n\n**Incremental load** upserts rows based on the primary key, keeping previously loaded data.",
         "enum_titles": [
           "Full Load",
           "Incremental Load"

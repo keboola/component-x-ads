@@ -100,29 +100,34 @@ class XAdsClient:
                     "access token/secret) and that the developer App is approved for the Ads API."
                 )
             if resp.status_code == 403:
+                logging.debug("403 response body for %s: %s", path, self._error_detail(resp))
                 raise UserException(
                     f"Access forbidden (403) on '{path}'. The account may lack Ads API access or the token "
-                    f"user may not have permission for this account. Details: {self._error_detail(resp)}"
+                    f"user may not have permission for this account."
                 )
             if resp.status_code in _USER_ERROR_STATUS:
+                logging.debug("HTTP %s response body for %s: %s", resp.status_code, path, self._error_detail(resp))
                 raise UserException(
                     f"Request to '{path}' was rejected (HTTP {resp.status_code}). This usually means a "
-                    f"configuration problem (invalid parameter, unsupported value or missing resource). "
-                    f"Details: {self._error_detail(resp)}"
+                    f"configuration problem (invalid parameter, unsupported value or missing resource)."
                 )
             if not resp.ok:
-                raise XAdsClientError(
-                    f"{method} {path} failed with HTTP {resp.status_code}: {self._error_detail(resp)}"
-                )
+                logging.debug("HTTP %s response body for %s: %s", resp.status_code, path, self._error_detail(resp))
+                raise XAdsClientError(f"{method} {path} failed with HTTP {resp.status_code}.")
             return resp
 
+        # Retries exhausted. A persistent network/transient-status failure is almost always a
+        # temporary service or rate-limit condition, so surface it as a user-actionable error
+        # (exit 1) rather than an opaque internal crash (exit 2).
         if last_exc is not None:
-            raise XAdsClientError(
-                f"Network error contacting the X Ads API for '{path}' after {_MAX_RETRIES} attempts "
-                f"({type(last_exc).__name__})."
+            raise UserException(
+                f"Could not reach the X Ads API for '{path}' after {_MAX_RETRIES} attempts "
+                f"({type(last_exc).__name__}). This is usually a temporary network or service issue — "
+                f"please try again later."
             ) from last_exc
-        raise XAdsClientError(
-            f"Exceeded retries ({_MAX_RETRIES}) for '{path}' after repeated transient responses (last HTTP {last_status})."
+        raise UserException(
+            f"The X Ads API kept returning transient errors (last HTTP {last_status}) for '{path}' after "
+            f"{_MAX_RETRIES} attempts. This is usually a temporary rate-limit or service issue — please try again later."
         )
 
     def _retry_wait_seconds(self, resp: requests.Response, attempt: int) -> int:
