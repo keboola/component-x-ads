@@ -45,14 +45,18 @@ If you need additional endpoints, please submit your request to
 Configuration
 =============
 
-Authentication
---------------
-`#consumer_key`, `#consumer_secret`, `#access_token`, `#access_token_secret` — the four OAuth 1.0a
-credentials. Use **Test Connection** to validate them.
+This component is **row-based**: authentication and account selection live on the main
+configuration, and each **row** defines one independent extraction (its own objects, analytics
+settings, load type, and incremental state).
 
-Data selection
+Main configuration (shared)
 --------------
-- `account_ids` — the X Ads account(s) to extract from.
+- `#consumer_key`, `#consumer_secret`, `#access_token`, `#access_token_secret` — the four OAuth 1.0a
+  credentials. Use **Test Connection** to validate them.
+- `account_ids` — the X Ads account(s) to extract from (shared by every row).
+
+Row configuration (one per extraction)
+--------------
 - `objects` — which entity objects to extract.
 - `analytics` — enable and configure performance-metric extraction (entities, metric groups,
   granularity, placement, date range).
