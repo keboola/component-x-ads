@@ -1,19 +1,66 @@
 {
   "type": "object",
-  "title": "extractor configuration",
-  "required": [
-    "print_hello"
-  ],
+  "title": "X Ads Extractor configuration",
   "properties": {
-    "print_hello": {
-      "type": "boolean",
-      "title": "Print Hello",
+    "#consumer_key": {
+      "type": "string",
+      "title": "Consumer API Key",
+      "format": "password",
+      "required": true,
       "propertyOrder": 1
     },
-    "debug": {
-      "type": "boolean",
-      "title": "Debug",
+    "#consumer_secret": {
+      "type": "string",
+      "title": "Consumer API Secret",
+      "format": "password",
+      "required": true,
       "propertyOrder": 2
+    },
+    "#access_token": {
+      "type": "string",
+      "title": "Access Token",
+      "format": "password",
+      "required": true,
+      "propertyOrder": 3
+    },
+    "#access_token_secret": {
+      "type": "string",
+      "title": "Access Token Secret",
+      "format": "password",
+      "required": true,
+      "propertyOrder": 4
+    },
+    "test_connection": {
+      "type": "button",
+      "format": "test-connection",
+      "propertyOrder": 5,
+      "options": {
+        "async": {
+          "label": "Test Connection",
+          "action": "testConnection"
+        }
+      }
+    },
+    "account_ids": {
+      "type": "array",
+      "title": "Ad Accounts",
+      "items": {
+        "type": "string",
+        "enum": []
+      },
+      "format": "select",
+      "uniqueItems": true,
+      "default": [],
+      "description": "Select the X (Twitter) Ads accounts to extract data for.",
+      "propertyOrder": 6,
+      "options": {
+        "tags": true,
+        "async": {
+          "label": "Load Accounts",
+          "action": "listAccounts",
+          "autoload": ["#consumer_key", "#consumer_secret", "#access_token", "#access_token_secret"]
+        }
+      }
     }
   }
 }

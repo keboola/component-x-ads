@@ -1,0 +1,28 @@
+{
+  "action": "run",
+  "parameters": {
+    "#consumer_key": "DUMMY",
+    "#consumer_secret": "DUMMY",
+    "#access_token": "DUMMY",
+    "#access_token_secret": "DUMMY",
+    "account_ids": [
+      "18ce55he0li"
+    ],
+    "object": "campaigns",
+    "analytics": {
+      "enabled": true,
+      "entities": [
+        "LINE_ITEM"
+      ],
+      "metric_groups": [
+        "ENGAGEMENT",
+        "BILLING"
+      ],
+      "granularity": "DAY",
+      "placement": "ALL_ON_TWITTER",
+      "date_range_mode": "last_n_days",
+      "n_days": 7
+    },
+    "load_type": "full_load"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "exit_code": null,
+  "stderr": "",
+  "logs": [
+    {
+      "level": "INFO",
+      "logger": "root",
+      "message": "Loading state file..",
+      "timestamp": "2026-07-20T12:00:00.000Z"
+    },
+    {
+      "level": "INFO",
+      "logger": "root",
+      "message": "Wrote 11 rows to x_ads_campaigns.",
+      "timestamp": "2026-07-20T12:00:00.000Z"
+    },
+    {
+      "level": "INFO",
+      "logger": "root",
+      "message": "No active LINE_ITEM entities for account 18ce55he0li in 2026-07-13..2026-07-20",
+      "timestamp": "2026-07-20T12:00:00.000Z"
+    },
+    {
+      "level": "INFO",
+      "logger": "root",
+      "message": "No rows for x_ads_stats_line_item; skipping table.",
+      "timestamp": "2026-07-20T12:00:00.000Z"
+    },
+    {
+      "level": "INFO",
+      "logger": "root",
+      "message": "Extraction finished.",
+      "timestamp": "2026-07-20T12:00:00.000Z"
+    }
+  ]
+}

@@ -8,7 +8,9 @@ __pycache__/
 *.egg-info
 venv
 .claude
-.DS_Store
+
+# build lifecycle tracker — local only, never committed
+docs/superpowers/
 
 # kbc datafolder
 /data
@@ -16,4 +18,6 @@ venv
 # vcr datadirtesting
 secrets.json
 tests/functional/*/source/data/out/
-tests/functional/*/source/data/in/
+# Only ignore runtime input artifacts, NOT seeded fixtures like in/state.json
+tests/functional/*/source/data/in/tables/
+tests/functional/*/source/data/in/files/

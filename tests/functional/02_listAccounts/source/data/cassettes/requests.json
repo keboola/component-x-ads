@@ -1,0 +1,7 @@
+{
+  "_metadata": {"freeze_time": "2026-07-20T12:00:00", "keboola_vcr_version": "0.6.0", "recorded_at": "2026-07-21T10:15:28.541043+00:00"},
+  "interactions": [
+    {"request": {"body": null, "headers": {"Accept": ["*/*"]}, "method": "GET", "uri": "https://ads-api.x.com/12/accounts?count=1000"}, "response": {"body": {"string": "{\"request\": {\"params\": {\"count\": 1000}}, \"next_cursor\": null, \"data\": [{\"name\": \"REDACTED\", \"business_name\": \"REDACTED\", \"timezone\": \"Europe/Prague\", \"timezone_switch_at\": \"2013-05-21T22:00:00Z\", \"country_code\": \"SI\", \"id\": \"18ce55he0li\", \"created_at\": \"2022-04-27T14:36:07Z\", \"updated_at\": \"2025-04-05T02:06:34Z\", \"industry_type\": null, \"business_id\": \"REDACTED\", \"approval_status\": \"ACCEPTED\", \"deleted\": false}]}"}, "headers": {"Content-Type": ["application/json; charset=utf-8"], "content-length": ["382"]}, "status": {"code": 200, "message": "OK"}}}
+  ],
+  "version": 1
+}

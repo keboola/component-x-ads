@@ -134,17 +134,20 @@ wheels = [
 name = "ex-x-ads"
 source = { virtual = "." }
 dependencies = [
+    { name = "dateparser" },
     { name = "keboola-component" },
     { name = "keboola-http-client" },
     { name = "keboola-utils" },
     { name = "pydantic" },
+    { name = "requests" },
+    { name = "requests-oauthlib" },
+    { name = "tenacity" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "freezegun" },
     { name = "keboola-datadirtest" },
-    { name = "mock" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "ruff" },
@@ -153,17 +156,20 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dateparser", specifier = ">=1.2.0" },
     { name = "keboola-component", specifier = ">=1.10.0" },
     { name = "keboola-http-client", specifier = ">=1.0.1" },
     { name = "keboola-utils", specifier = ">=1.1.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "requests", specifier = ">=2.32.0" },
+    { name = "requests-oauthlib", specifier = ">=2.0.0" },
+    { name = "tenacity", specifier = ">=9.0.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "freezegun", specifier = ">=1.5.1" },
     { name = "keboola-datadirtest", specifier = ">=2.2.0" },
-    { name = "mock", specifier = ">=5.2.0" },
     { name = "pre-commit", specifier = ">=4.5.0" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "ruff", specifier = ">=0.15.2" },
@@ -310,24 +316,15 @@ wheels = [
 
 [[package]]
 name = "keboola-vcr"
-version = "0.5.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "freezegun" },
     { name = "vcrpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/97/45/deaeec7cedfc9dd2b5018b24a54a4ad14c9eef943a83d6fda625b76aa3ca/keboola_vcr-0.5.0.tar.gz", hash = "sha256:b924d3b897cc1203a26077ed1016f3a1a559cac151ee6b6662ff2398f92128c9", size = 40875 }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/3b/70d144918d0246f1a19609d562cfd65f698de600a3bc5814f7b7bbcf485d/keboola_vcr-0.6.0.tar.gz", hash = "sha256:05fb9fcbd02b96c74dfbe1de11aba8af95f7f5858d8df060a2484297f38dc637", size = 41030 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/63/688abe43d0c7185582033496b09a936be4da549ae204bfcbb5d498c0cf39/keboola_vcr-0.5.0-py3-none-any.whl", hash = "sha256:aa1619873944f9b79881d75b50ae3e36d9810a5009a053b074135f9193ac73c3", size = 45055 },
-]
-
-[[package]]
-name = "mock"
-version = "5.2.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/07/8c/14c2ae915e5f9dca5a22edd68b35be94400719ccfa068a03e0fb63d0f6f6/mock-5.2.0.tar.gz", hash = "sha256:4e460e818629b4b173f32d08bf30d3af8123afbb8e04bb5707a1fd4799e503f0", size = 92796 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/d9/617e6af809bf3a1d468e0d58c3997b1dc219a9a9202e650d30c2fc85d481/mock-5.2.0-py3-none-any.whl", hash = "sha256:7ba87f72ca0e915175596069dbbcc7c75af7b5e9b9bc107ad6349ede0819982f", size = 31617 },
+    { url = "https://files.pythonhosted.org/packages/f2/26/86dc9c24d85cd46aefd306c51ac4745e9c9d3f3e0c1bd798e98e523a5c62/keboola_vcr-0.6.0-py3-none-any.whl", hash = "sha256:e46e85f31154ff7037871c7063b1c71e0ad509290ad18a588ad77708be03b333", size = 45193 },
 ]
 
 [[package]]
@@ -337,6 +334,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/24/bf/d1bda4f6168e0b2e9e5958945e01910052158313224ada5ce1fb2e1113b8/nodeenv-1.10.0.tar.gz", hash = "sha256:996c191ad80897d076bdfba80a41994c2b47c68e224c542b48feba42ba00f8bb", size = 55611 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/b2/d0896bdcdc8d28a7fc5717c305f1a861c26e18c05047949fb371034d98bd/nodeenv-1.10.0-py2.py3-none-any.whl", hash = "sha256:5bb13e3eed2923615535339b3c620e76779af4cb4c6a90deccc9e36b274d3827", size = 23438 },
+]
+
+[[package]]
+name = "oauthlib"
+version = "3.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/5f/19930f824ffeb0ad4372da4812c50edbd1434f678c90c2733e1188edfc63/oauthlib-3.3.1.tar.gz", hash = "sha256:0f0f8aa759826a193cf66c12ea1af1637f87b9b4622d46e866952bb022e538c9", size = 185918 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/9c/92789c596b8df838baa98fa71844d84283302f7604ed565dafe5a6b5041a/oauthlib-3.3.1-py3-none-any.whl", hash = "sha256:88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1", size = 160065 },
 ]
 
 [[package]]
@@ -588,6 +594,19 @@ wheels = [
 ]
 
 [[package]]
+name = "requests-oauthlib"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "oauthlib" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/42/f2/05f29bc3913aea15eb670be136045bf5c5bbf4b99ecb839da9b422bb2c85/requests-oauthlib-2.0.0.tar.gz", hash = "sha256:b3dffaebd884d8cd778494369603a9e7b58d29111bf6b41bdc2dcd87203af4e9", size = 55650 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/5d/63d4ae3b9daea098d5d6f5da83984853c1bbacd5dc826764b249fe119d24/requests_oauthlib-2.0.0-py2.py3-none-any.whl", hash = "sha256:7dd8a5c40426b779b0868c404bdef9768deccf22749cde15852df527e6269b36", size = 24179 },
+]
+
+[[package]]
 name = "ruff"
 version = "0.15.22"
 source = { registry = "https://pypi.org/simple" }
@@ -619,6 +638,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050 },
+]
+
+[[package]]
+name = "tenacity"
+version = "9.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/c6/ee486fd809e357697ee8a44d3d69222b344920433d3b6666ccd9b374630c/tenacity-9.1.4.tar.gz", hash = "sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a", size = 49413 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl", hash = "sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55", size = 28926 },
 ]
 
 [[package]]

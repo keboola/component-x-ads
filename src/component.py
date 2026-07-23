@@ -1,102 +1,521 @@
-"""
-Template Component main class.
+"""X Ads extractor — main component class.
 
+Pulls X Ads campaign-management entities and (optionally) performance
+analytics into Keboola Storage. ``run()`` is a thin orchestrator; all HTTP
+access lives in :mod:`client`.
 """
+
+from __future__ import annotations
 
 import csv
+import json
 import logging
-from datetime import datetime
+import tempfile
+from collections.abc import Iterable, Iterator
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from keboola.component.base import ComponentBase
+import dateparser
+from keboola.component.base import ComponentBase, sync_action
+from keboola.component.dao import BaseType, ColumnDefinition
 from keboola.component.exceptions import UserException
+from keboola.component.sync_actions import MessageType, SelectElement, ValidationResult
+from keboola.vcr import BodyFieldSanitizer, DefaultSanitizer
 
-from configuration import Configuration
+from client import MAX_ENTITY_IDS_PER_JOB, XAdsClient
+from configuration import Configuration, Credentials, DateRangeMode, EntityObject, Granularity, StatsEntity
+
+# Picked up automatically by the datadirtest VCR scaffolder during recording.
+# 1) DefaultSanitizer strips the Authorization header carrying the OAuth 1.0a
+#    credentials + signature (only content-type/length/accept are kept).
+# 2) BodyFieldSanitizer redacts the ad account's names/identifiers (-> REDACTED)
+#    and money figures (-> 0, so numeric-typed columns stay valid) from recorded
+#    response bodies, so committed cassettes carry no marketing/spend data.
+#    NEVER add `timezone` (drives the analytics window) or any id field
+#    (`id`, `campaign_id`, `line_item_id`, `account_id`, …) — the component logic
+#    and primary keys depend on them.
+_REDACTED_TEXT_FIELDS = ["name", "advertiser_user_id", "advertiser_domain", "business_name", "business_id", "tweet_id"]
+_REDACTED_NUMERIC_FIELDS = [
+    "daily_budget_amount_local_micro",
+    "total_budget_amount_local_micro",
+    "bid_amount_local_micro",
+    "target_cpa_local_micro",
+    "billed_charge_local_micro",
+    "billed_engagements",
+]
+VCR_SANITIZERS = [
+    DefaultSanitizer(additional_sensitive_fields=["oauth_token", "oauth_consumer_key", "oauth_signature"]),
+    BodyFieldSanitizer(fields=_REDACTED_TEXT_FIELDS, replacement="REDACTED"),
+    BodyFieldSanitizer(fields=_REDACTED_NUMERIC_FIELDS, replacement="0"),
+]
+
+_STATE_LAST_RUN = "last_run"
+
+# Placeholder written for an otherwise-empty primary-key cell. Keboola typed-table
+# primary-key columns are physically NOT NULL, and an empty CSV field imports as
+# NULL — so a blank PK value (e.g. an unsegmented stats row whose `segment` is
+# empty) fails the storage load. See _serialize_cell.
+_EMPTY_PK_PLACEHOLDER = "__empty__"
+
+# Max window a single async job may span (non-segmented). We chunk larger ranges.
+_MAX_JOB_WINDOW_DAYS = 90
+
+# active_entities is available for these stats entities; ACCOUNT stats use the account id directly.
+_ACTIVE_ENTITY_TYPES = {
+    StatsEntity.FUNDING_INSTRUMENT,
+    StatsEntity.CAMPAIGN,
+    StatsEntity.LINE_ITEM,
+    StatsEntity.PROMOTED_ACCOUNT,
+    StatsEntity.PROMOTED_TWEET,
+}
+
+# Native output types for fields the X Ads API exposes with a stable, known type.
+# Metric columns are deliberately left STRING — they are heterogeneous (some are
+# nested arrays that we serialize to JSON), so typing them risks load failures.
+_TIMESTAMP_COLUMNS = frozenset({"created_at", "updated_at", "start_time", "end_time"})
+_BOOLEAN_COLUMNS = frozenset({"deleted", "servable", "standard_delivery"})
+
+
+class _TableWriter:
+    """Spools rows to a temp NDJSON file while tracking the column superset.
+
+    Lets a table be produced without holding every row in memory: rows are appended
+    to disk as they are fetched (bounded memory = one row + the header key-set), then
+    streamed back into the output CSV by :meth:`Component._finalize_table`. Needed
+    because large pulls (many accounts × HOUR-granularity stats) can be huge.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.columns: dict[str, None] = {}  # insertion-ordered set of every key seen
+        self.count = 0
+        self._fh = tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix=f"{name}_",
+            suffix=".ndjson",
+            dir=tempfile.gettempdir(),
+            delete=False,
+            encoding="utf-8",
+            newline="",
+        )
+        self.path = Path(self._fh.name)
+
+    def write(self, row: dict[str, Any]) -> None:
+        for key in row:
+            self.columns.setdefault(key, None)
+        self._fh.write(json.dumps(row))
+        self._fh.write("\n")
+        self.count += 1
+
+    def rows(self) -> Iterator[dict[str, Any]]:
+        self._fh.flush()
+        with self.path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    yield json.loads(line)
+
+    def close(self) -> None:
+        self._fh.close()
+        self.path.unlink(missing_ok=True)
 
 
 class Component(ComponentBase):
-    """
-    Extends base class for general Python components. Initializes the CommonInterface
-    and performs configuration validation.
-
-    For easier debugging the data folder is picked up by default from `../data` path,
-    relative to working directory.
-
-    If `debug` parameter is present in the `config.json`, the default logger is set to verbose DEBUG mode.
-    """
-
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
+        # Parse only the credentials here and build the API client once, shared by
+        # run() and the sync actions (separate entrypoints). Validating just the
+        # credentials keeps Test Connection / Load Accounts from tripping over an
+        # unrelated analytics validation error. run() parses the full Configuration.
+        creds = Credentials(**self.configuration.parameters)
+        self._client = XAdsClient(
+            creds.consumer_key,
+            creds.consumer_secret,
+            creds.access_token,
+            creds.access_token_secret,
+        )
 
-    def run(self):
-        """
-        Main execution code
-        """
+    # ----------------------------------------------------------------- run
 
-        # ####### EXAMPLE TO REMOVE
-        # check for missing configuration parameters
-        params = Configuration(**self.configuration.parameters)
+    def run(self) -> None:
+        cfg = Configuration(**self.configuration.parameters)
+        self._validate_run_config(cfg)
 
-        # Access parameters in configuration
-        if params.print_hello:
-            logging.info("Hello World")
+        # Capture the watermark BEFORE fetching so anything changing mid-run is re-fetched next time.
+        run_started_at = datetime.now(UTC)
+        previous_state = self.get_state_file() or {}
 
-        # get input table definitions
-        input_tables = self.get_input_tables_definitions()
-        for table in input_tables:
-            logging.info("Received input table: %s with path: %s", table.name, table.full_path)
+        if cfg.entity_object:
+            self._extract_entities(cfg)
 
-        if len(input_tables) == 0:
-            raise UserException("No input tables found")
+        if cfg.analytics.enabled:
+            self._extract_analytics(cfg, previous_state)
 
-        # get last state data/in/state.json from previous run
-        previous_state = self.get_state_file()
-        logging.info(previous_state.get("some_parameter"))
+        # Advance the watermark only after successful writes.
+        self.write_state_file({_STATE_LAST_RUN: run_started_at.isoformat()})
+        logging.info("Extraction finished.")
 
-        # Create output table (Table definition - just metadata)
-        table = self.create_out_table_definition("output.csv", incremental=True, primary_key=["timestamp"])
+    @staticmethod
+    def _validate_run_config(cfg: Configuration) -> None:
+        if not cfg.account_ids:
+            raise UserException("No X Ads account IDs configured. Add at least one account_id.")
+        if not cfg.entity_object and not cfg.analytics.enabled:
+            raise UserException("Nothing to extract: select an object or enable analytics.")
 
-        # get file path of the table (data/out/tables/Features.csv)
-        out_table_path = table.full_path
-        logging.info(out_table_path)
+    # ------------------------------------------------------------ entities
 
-        # Add timestamp column and save into out_table_path
-        input_table = input_tables[0]
-        with (
-            open(input_table.full_path) as inp_file,
-            open(table.full_path, mode="w", encoding="utf-8", newline="") as out_file,
-        ):
-            reader = csv.DictReader(inp_file)
+    def _extract_entities(self, cfg: Configuration) -> None:
+        obj = cfg.entity_object
+        assert obj is not None  # guarded by run(); one object per config row
+        writer = _TableWriter(f"x_ads_{obj.value}")
+        try:
+            if obj == EntityObject.accounts:
+                for account in self._client.list_accounts():
+                    if account.get("id") in cfg.account_ids:
+                        writer.write(self._flatten_record(account))
+            else:
+                for account_id in cfg.account_ids:
+                    for record in self._client.list_account_entities(account_id, obj.value):
+                        flat = self._flatten_record(record)
+                        flat["account_id"] = account_id
+                        writer.write(flat)
 
-            columns = list(reader.fieldnames)
-            # append timestamp
-            columns.append("timestamp")
+            pk = ["id"] if obj == EntityObject.accounts else ["account_id", "id"]
+            self._finalize_table(writer, primary_key=pk, incremental=cfg.incremental)
+        finally:
+            writer.close()
 
-            # write result with column added
-            writer = csv.DictWriter(out_file, fieldnames=columns)
-            writer.writeheader()
-            for in_row in reader:
-                in_row["timestamp"] = datetime.now().isoformat()
-                writer.writerow(in_row)
+    # ----------------------------------------------------------- analytics
 
-        # Save table manifest (output.csv.manifest) from the Table definition
+    def _extract_analytics(self, cfg: Configuration, previous_state: dict[str, Any]) -> None:
+        a = cfg.analytics
+        metric_groups = [m.value for m in a.metric_groups]
+        # One spooling writer per stats entity; rows are streamed to disk as each async
+        # job completes rather than accumulated in memory across all accounts/windows.
+        writers = {entity: _TableWriter(f"x_ads_stats_{entity.value.lower()}") for entity in a.entities}
+        try:
+            # The analytics window must align to midnight in the account's timezone, and that
+            # timezone can differ per account — so resolve it and build the window per account.
+            for account_id in cfg.account_ids:
+                zone = self._account_zone(account_id)
+                start_date, end_date = self._analytics_window(cfg, previous_state, zone)
+                windows = self._split_windows(start_date, end_date)
+                if not windows:
+                    logging.info(
+                        "Analytics for account %s already up to date (%s..%s); nothing to fetch.",
+                        account_id,
+                        start_date,
+                        end_date,
+                    )
+                    continue
+                for entity in a.entities:
+                    for row in self._iter_entity_stats(cfg, account_id, entity, metric_groups, windows, zone):
+                        writers[entity].write(row)
+
+            pk = ["account_id", "entity_type", "entity_id", "segment", "placement", "date"]
+            for writer in writers.values():
+                # Stats columns are heterogeneous (metric families vary per group, values
+                # can be null/JSON-serialized arrays), so they stay STRING — native typing
+                # applies only to the entity tables with known, stable column types.
+                self._finalize_table(writer, primary_key=pk, incremental=cfg.incremental, typed=False)
+        finally:
+            for writer in writers.values():
+                writer.close()
+
+    def _iter_entity_stats(
+        self,
+        cfg: Configuration,
+        account_id: str,
+        entity: StatsEntity,
+        metric_groups: list[str],
+        windows: list[tuple[date, date]],
+        zone: ZoneInfo,
+    ) -> Iterator[dict[str, Any]]:
+        placement = cfg.analytics.placement.value
+        granularity = cfg.analytics.granularity.value
+
+        for win_start, win_end in windows:
+            start_iso = self._local_midnight_utc(win_start, zone)
+            end_iso = self._local_midnight_utc(win_end, zone)
+            entity_ids = self._resolve_entity_ids(account_id, entity, start_iso, end_iso)
+            if not entity_ids:
+                logging.info(
+                    "No active %s entities for account %s in %s..%s", entity.value, account_id, win_start, win_end
+                )
+                continue
+
+            for chunk in self._chunk(entity_ids, MAX_ENTITY_IDS_PER_JOB):
+                job_id = self._client.create_async_job(
+                    account_id,
+                    entity=entity.value,
+                    entity_ids=chunk,
+                    metric_groups=metric_groups,
+                    granularity=granularity,
+                    placement=placement,
+                    start_time=start_iso,
+                    end_time=end_iso,
+                )
+                url = self._client.poll_job(account_id, job_id)
+                result = self._client.download_job_result(url)
+                yield from self._flatten_stats(
+                    result, account_id, entity.value, granularity, placement, win_start, zone
+                )
+
+    def _resolve_entity_ids(self, account_id: str, entity: StatsEntity, start_iso: str, end_iso: str) -> list[str]:
+        if entity == StatsEntity.ACCOUNT:
+            return [account_id]
+        if entity in _ACTIVE_ENTITY_TYPES:
+            active = self._client.active_entities(account_id, entity.value, start_iso, end_iso)
+            return [e["entity_id"] for e in active if e.get("entity_id")]
+        return []
+
+    def _account_zone(self, account_id: str) -> ZoneInfo:
+        tz_name = self._client.get_account(account_id).get("timezone") or "UTC"
+        try:
+            return ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError, ValueError:
+            logging.warning("Unknown account timezone %r for %s; falling back to UTC.", tz_name, account_id)
+            return ZoneInfo("UTC")
+
+    def _analytics_window(
+        self, cfg: Configuration, previous_state: dict[str, Any], zone: ZoneInfo
+    ) -> tuple[date, date]:
+        a = cfg.analytics
+
+        if a.date_range_mode == DateRangeMode.custom:
+            start, end = self._parse_day(a.start_date), self._parse_day(a.end_date)
+            if start >= end:
+                raise UserException(f"Analytics start date ({start}) must be before end date ({end}).")
+            return start, end
+
+        end = datetime.now(zone).date()
+        start = end - timedelta(days=a.n_days)
+        if cfg.incremental:
+            last = self._state_last_run_day(previous_state, zone)
+            if last is not None:
+                # Re-pull from the last successful run so revised stats are upserted; never start after `end`.
+                start = min(last, end)
+        return start, end
+
+    @staticmethod
+    def _state_last_run_day(previous_state: dict[str, Any], zone: ZoneInfo) -> date | None:
+        last = previous_state.get(_STATE_LAST_RUN)
+        if not last:
+            return None
+        try:
+            return datetime.fromisoformat(last).astimezone(zone).date()
+        except TypeError, ValueError:
+            logging.warning("Ignoring unreadable %s state value %r; using the default window.", _STATE_LAST_RUN, last)
+            return None
+
+    @staticmethod
+    def _split_windows(start: date, end: date) -> list[tuple[date, date]]:
+        # Empty (start >= end) is not an error: in last-N-days incremental mode a same-day
+        # re-run legitimately has nothing new to fetch. Custom-range validation happens in
+        # _analytics_window, where a user-entered start >= end IS a UserException.
+        windows: list[tuple[date, date]] = []
+        cursor = start
+        while cursor < end:
+            windows.append((cursor, min(cursor + timedelta(days=_MAX_JOB_WINDOW_DAYS), end)))
+            cursor += timedelta(days=_MAX_JOB_WINDOW_DAYS)
+        return windows
+
+    # ---------------------------------------------------------- flattening
+
+    def _flatten_stats(
+        self,
+        result: dict[str, Any],
+        account_id: str,
+        entity_type: str,
+        granularity: str,
+        placement: str,
+        win_start: date,
+        zone: ZoneInfo,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for entity in result.get("data") or []:
+            entity_id = entity.get("id")
+            for id_data in entity.get("id_data") or []:
+                segment = self._segment_label(id_data.get("segment"))
+                metrics = id_data.get("metrics") or {}
+                length = max((len(v) for v in metrics.values() if isinstance(v, list)), default=1)
+                for i in range(length):
+                    row: dict[str, Any] = {
+                        "account_id": account_id,
+                        "entity_type": entity_type,
+                        "entity_id": entity_id,
+                        "segment": segment,
+                        "placement": placement,
+                        "granularity": granularity,
+                        "date": self._bucket_label(win_start, granularity, i, zone),
+                    }
+                    for mkey, mval in metrics.items():
+                        row[mkey] = self._metric_value(mval, i)
+                    rows.append(row)
+        return rows
+
+    @staticmethod
+    def _metric_value(mval: object, i: int) -> object:
+        if isinstance(mval, list):
+            if i >= len(mval) or mval[i] is None:
+                return ""
+            value = mval[i]
+            return json.dumps(value) if isinstance(value, (list, dict)) else value
+        return "" if mval is None else mval
+
+    @staticmethod
+    def _segment_label(segment: dict[str, Any] | None) -> str:
+        if not segment:
+            return ""
+        name = segment.get("segment_name")
+        value = segment.get("segment_value")
+        if name is not None:
+            return f"{name}={value}"
+        return json.dumps(segment)
+
+    @staticmethod
+    def _flatten_record(record: dict[str, Any]) -> dict[str, Any]:
+        """Flatten one entity record; nested objects/lists become JSON strings."""
+        flat: dict[str, Any] = {}
+        for key, value in record.items():
+            flat[key] = json.dumps(value) if isinstance(value, (list, dict)) else value
+        return flat
+
+    # -------------------------------------------------------------- output
+
+    def _finalize_table(
+        self,
+        writer: _TableWriter,
+        primary_key: list[str],
+        incremental: bool,
+        typed: bool = True,
+    ) -> None:
+        if writer.count == 0:
+            logging.info("No rows for %s; skipping table.", writer.name)
+            return
+        columns = self._order_columns(writer.columns, primary_key)
+        base_type = self._base_type_for if typed else (lambda _col: BaseType.string())
+        schema = {col: ColumnDefinition(data_types=base_type(col)) for col in columns}
+        table = self.create_out_table_definition(
+            f"{writer.name}.csv", primary_key=primary_key, incremental=incremental, schema=schema
+        )
+        pk_columns = set(primary_key)
+        with open(table.full_path, "w", encoding="utf-8", newline="") as fh:
+            csv_writer = csv.writer(fh)
+            for row in writer.rows():
+                csv_writer.writerow([self._serialize_cell(row.get(col, ""), col in pk_columns) for col in columns])
         self.write_manifest(table)
+        logging.info("Wrote %d rows to %s.", writer.count, writer.name)
 
-        # Write new state - will be available next run
-        self.write_state_file({"some_state_parameter": "value"})
+    @staticmethod
+    def _base_type_for(name: str) -> BaseType:
+        if name.endswith("_local_micro"):
+            return BaseType.integer()
+        if name in _TIMESTAMP_COLUMNS:
+            return BaseType.timestamp()
+        if name in _BOOLEAN_COLUMNS:
+            return BaseType.boolean()
+        return BaseType.string()
 
-        # ####### EXAMPLE TO REMOVE END
+    @staticmethod
+    def _order_columns(columns: Iterable[str], primary_key: list[str]) -> list[str]:
+        # Deterministic column order: primary key first, then the remaining fields
+        # alphabetically. Data-derived order would vary with API response ordering,
+        # which is undesirable for a stable incremental schema.
+        seen = set(primary_key)
+        extra = sorted(col for col in columns if col not in seen)
+        return list(primary_key) + extra
+
+    @staticmethod
+    def _serialize(value: object) -> object:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return value
+
+    @staticmethod
+    def _serialize_cell(value: object, is_primary_key: bool) -> object:
+        # A primary-key column must never be empty: Keboola imports an empty CSV
+        # field as NULL and PK columns are NOT NULL, so a blank PK value fails the
+        # load. Emit a stable, non-empty placeholder so the row upserts under a
+        # deterministic key (only PK cells are touched; other blanks stay empty).
+        serialized = Component._serialize(value)
+        if is_primary_key and (serialized is None or serialized == ""):
+            return _EMPTY_PK_PLACEHOLDER
+        return serialized
+
+    # --------------------------------------------------------------- utils
+
+    @staticmethod
+    def _chunk(items: list[str], size: int) -> Iterator[list[str]]:
+        for i in range(0, len(items), size):
+            yield items[i : i + size]
+
+    @staticmethod
+    def _parse_day(value: str | None) -> date:
+        if not value:
+            raise UserException("A date is required but was empty.")
+        # dateparser accepts absolute (YYYY-MM-DD, 2024/01/31, ...) and relative
+        # ("yesterday", "30 days ago", "last monday") date strings.
+        parsed = dateparser.parse(str(value), settings={"RETURN_AS_TIMEZONE_AWARE": False})
+        if parsed is None:
+            raise UserException(
+                f"Could not parse date '{value}'. Use YYYY-MM-DD or a relative date such as "
+                f"'yesterday' or '30 days ago'."
+            )
+        return parsed.date()
+
+    @staticmethod
+    def _local_midnight_utc(day: date, zone: ZoneInfo) -> str:
+        """UTC instant of midnight-on `day` in the account timezone, as X expects (whole hour)."""
+        local_midnight = datetime(day.year, day.month, day.day, tzinfo=zone)
+        return local_midnight.astimezone(UTC).strftime("%Y-%m-%dT%H:00:00Z")
+
+    @staticmethod
+    def _bucket_label(win_start: date, granularity: str, index: int, zone: ZoneInfo) -> str:
+        if granularity == Granularity.HOUR.value:
+            dt = datetime(win_start.year, win_start.month, win_start.day, tzinfo=zone) + timedelta(hours=index)
+            return dt.strftime("%Y-%m-%dT%H:00:00%z")
+        if granularity == Granularity.TOTAL.value:
+            return win_start.isoformat()
+        return (win_start + timedelta(days=index)).isoformat()
+
+    # ------------------------------------------------------- sync actions
+
+    @sync_action("testConnection")
+    def test_connection(self) -> ValidationResult:
+        try:
+            self._client.list_accounts()
+        except UserException:
+            raise
+        except Exception as exc:
+            raise UserException(f"Connection test failed: {exc}") from exc
+        return ValidationResult("Connection successful.", MessageType.SUCCESS)
+
+    @sync_action("listAccounts")
+    def list_accounts_action(self) -> list[SelectElement]:
+        try:
+            accounts = self._client.list_accounts()
+        except UserException:
+            raise
+        except Exception as exc:
+            raise UserException(f"Could not load accounts: {exc}") from exc
+        return [
+            SelectElement(value=acc["id"], label=f"{acc.get('name', acc['id'])} ({acc['id']})")
+            for acc in accounts
+            if acc.get("id")
+        ]
 
 
-"""
-        Main entrypoint
-"""
 if __name__ == "__main__":
     try:
         comp = Component()
-        # this triggers the run method by default and is controlled by the configuration.action parameter
         comp.execute_action()
     except UserException as exc:
-        logging.exception(exc)
+        # A user-fixable error — a traceback would only add noise to the job log.
+        logging.error(str(exc))
         exit(1)
     except Exception as exc:
         logging.exception(exc)

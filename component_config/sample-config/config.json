@@ -2,12 +2,7 @@
   "storage": {
     "input": {
       "files": [],
-      "tables": [
-        {
-          "source": "in.c-example.example",
-          "destination": "example.csv"
-        }
-      ]
+      "tables": []
     },
     "output": {
       "files": [],
@@ -15,7 +10,21 @@
     }
   },
   "parameters": {
-    "#api_token": "your-secret-token",
-    "debug": false
+    "#consumer_key": "your-consumer-key",
+    "#consumer_secret": "your-consumer-secret",
+    "#access_token": "your-access-token",
+    "#access_token_secret": "your-access-token-secret",
+    "account_ids": ["18ce54d4x5t"],
+    "object": "campaigns",
+    "analytics": {
+      "enabled": true,
+      "entities": ["LINE_ITEM"],
+      "metric_groups": ["ENGAGEMENT", "BILLING"],
+      "granularity": "DAY",
+      "placement": "ALL_ON_TWITTER",
+      "date_range_mode": "last_n_days",
+      "n_days": 7
+    },
+    "load_type": "incremental_load"
   }
 }

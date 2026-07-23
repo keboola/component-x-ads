@@ -1,0 +1,39 @@
+{
+  "files": {},
+  "hash_algorithm": "sha256",
+  "tables": {
+    "x_ads_campaigns.csv": {
+      "columns": [
+        "18ce55he0li",
+        "iuyql",
+        "LINE_ITEM",
+        "2022-11-11T08:26:52Z",
+        "EUR",
+        "0",
+        "false",
+        "",
+        "EXPIRED",
+        "ACTIVE",
+        "",
+        "13vhl4",
+        "REDACTED",
+        "",
+        "[\"EXPIRED\", \"FUNDING_PROBLEM\"]",
+        "false",
+        "",
+        "0",
+        "2022-11-22T10:19:39Z"
+      ],
+      "hash": "sha256:313ae432eb3d0c4532abdc333b67cb07daa05cd905672786929d4448ccd35f4d",
+      "row_count": 11,
+      "size_bytes": 1971
+    },
+    "x_ads_campaigns.csv.manifest": {
+      "columns": null,
+      "hash": "sha256:4393b64aa504943d87a907789f2462b29494807ef18a261686311f583a8e4621",
+      "row_count": null,
+      "size_bytes": 1894
+    }
+  },
+  "version": "1.0"
+}
